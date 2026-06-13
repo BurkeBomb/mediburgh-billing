@@ -167,7 +167,6 @@ export default function DashboardPage() {
           setTotalClaimsCount(total);
           setValueBilledTotal(total * 1250);
           
-          // CRITICAL FIXED LINE: Strict structural inline type cast assignment to clear Vercel build checks
           const successfulCases = monthClaims.filter((c: { status: string }) => c.status === "captured" || c.status === "billed").length;
           const rate = total > 0 ? Math.round((successfulCases / total) * 100) : 100;
           setPracticeSuccessRate(rate);
@@ -197,6 +196,7 @@ export default function DashboardPage() {
     };
   }, [liveTickets]);
 
+  // ── STRING NORMALIZATION SCAN FILTER ENGINES ──
   const filteredIcdOptions = useMemo(() => {
     const q = icdSearch.trim().toLowerCase();
     const cleanDesc = (descStr: string) => {
@@ -206,8 +206,8 @@ export default function DashboardPage() {
 
     if (!q) {
       return ALL_ICD10_CODES.slice(0, 8).map((item) => ({
-        code: item.ICD10CODE,
-        description: cleanDesc(item["DESCRIPTION\r"]),
+        code: item.ICD10CODE || "—",
+        description: cleanDesc(item["DESCRIPTION\r"] || ""),
       }));
     }
 
@@ -219,8 +219,8 @@ export default function DashboardPage() {
       })
       .slice(0, 15)
       .map((item) => ({
-        code: item.ICD10CODE,
-        description: cleanDesc(item["DESCRIPTION\r"]),
+        code: item.ICD10CODE || "—",
+        description: cleanDesc(item["DESCRIPTION\r"] || ""),
       }));
   }, [icdSearch]);
 
