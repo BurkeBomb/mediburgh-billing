@@ -145,6 +145,7 @@ export default function DashboardPage() {
 
   const supabase = createClient();
 
+  // ── LIVE METRICS AND DATA STREAMING PIPELINE ──
   useEffect(() => {
     async function fetchLiveMetrics() {
       try {
@@ -166,7 +167,8 @@ export default function DashboardPage() {
           setTotalClaimsCount(total);
           setValueBilledTotal(total * 1250);
           
-          const successfulCases = monthClaims.filter(c => c.status === "captured" || c.status === "billed").length;
+          // CRITICAL FIXED LINE: Strict structural inline type cast assignment to clear Vercel build checks
+          const successfulCases = monthClaims.filter((c: { status: string }) => c.status === "captured" || c.status === "billed").length;
           const rate = total > 0 ? Math.round((successfulCases / total) * 100) : 100;
           setPracticeSuccessRate(rate);
         }
