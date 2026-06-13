@@ -126,12 +126,15 @@ export default function OfficePortalPage() {
       return;
     }
 
+    // STRICT TYPE-CHECKING SAFE-GUARD: Force snapshot binding to a guaranteed immutable identifier scope variable
+    const targetClaimId = selectedClaim.id;
+
     async function fetchClaimHistory() {
       try {
         const { data, error: logErr } = await supabase
           .from("audit_logs")
           .select("id, claim_id, action, timestamp")
-          .eq("claim_id", selectedClaim.id)
+          .eq("claim_id", targetClaimId)
           .order("timestamp", { ascending: false });
 
         if (logErr) throw logErr;
@@ -270,7 +273,6 @@ export default function OfficePortalPage() {
         {successMessage && <div className="mb-4 rounded-sm border border-teal-500/30 bg-teal-950/20 px-4 py-3 text-sm text-teal-100">{successMessage}</div>}
 
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-4">
-          {/* Linked practices directory sidebar */}
           <section className="lg:col-span-1 flex flex-col gap-4">
             <div className={cardClassName}>
               <div className="border-b border-slate-800/90 px-4 py-3">
@@ -298,7 +300,6 @@ export default function OfficePortalPage() {
               )}
             </div>
 
-            {/* Live Ticket Transmission Module */}
             <div className={cardClassName}>
               <div className="border-b border-slate-800/90 px-4 py-3">
                 <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-200">Broadcast Practice Alert</h3>
@@ -306,16 +307,16 @@ export default function OfficePortalPage() {
               </div>
               <form onSubmit={handleCreateTicket} className="p-4 space-y-3">
                 <div>
-                  <label htmlFor="ticket-subject-input" className="block text-[9px] uppercase font-medium tracking-wider text-slate-400 mb-1">Subject</label>
-                  <input id="ticket-subject-input" type="text" value={ticketSubject} onChange={(e) => setTicketSubject(e.target.value)} className={inputClassName} placeholder="e.g. Missing Theatre End Time" />
+                  <label htmlFor="bureau-ticket-subject" className="block text-[9px] uppercase font-medium tracking-wider text-slate-400 mb-1">Subject</label>
+                  <input id="bureau-ticket-subject" type="text" value={ticketSubject} onChange={(e) => setTicketSubject(e.target.value)} className={inputClassName} placeholder="e.g. Missing Theatre End Time" />
                 </div>
                 <div>
-                  <label htmlFor="ticket-preview-input" className="block text-[9px] uppercase font-medium tracking-wider text-slate-400 mb-1">Message Preview</label>
-                  <textarea id="ticket-preview-input" rows={2} value={ticketPreview} onChange={(e) => setTicketPreview(e.target.value)} className={`${inputClassName} resize-none`} placeholder="Details for practitioner notes..." />
+                  <label htmlFor="bureau-ticket-preview" className="block text-[9px] uppercase font-medium tracking-wider text-slate-400 mb-1">Message Preview</label>
+                  <textarea id="bureau-ticket-preview" rows={2} value={ticketPreview} onChange={(e) => setTicketPreview(e.target.value)} className={`${inputClassName} resize-none`} placeholder="Details for practitioner notes..." />
                 </div>
                 <div>
-                  <label htmlFor="ticket-priority-select" className="block text-[9px] uppercase font-medium tracking-wider text-slate-400 mb-1">Priority Layer</label>
-                  <select id="ticket-priority-select" value={ticketPriority} onChange={(e) => setTicketPriority(e.target.value as any)} className={`${inputClassName} bg-slate-950`}>
+                  <label htmlFor="bureau-ticket-priority" className="block text-[9px] uppercase font-medium tracking-wider text-slate-400 mb-1">Priority Layer</label>
+                  <select id="bureau-ticket-priority" value={ticketPriority} onChange={(e) => setTicketPriority(e.target.value as any)} className={`${inputClassName} bg-slate-950`}>
                     <option value="open">Standard Open Alert</option>
                     <option value="urgent">Urgent Operational Check</option>
                   </select>
@@ -325,7 +326,6 @@ export default function OfficePortalPage() {
             </div>
           </section>
 
-          {/* Central Queue Table Component */}
           <section className="lg:col-span-3 flex flex-col gap-6">
             <div className={cardClassName}>
               <div className="border-b border-slate-800/90 px-5 py-3 flex flex-wrap items-center justify-between gap-4">
@@ -385,7 +385,6 @@ export default function OfficePortalPage() {
               </div>
             </div>
 
-            {/* sliding drawer review block */}
             {selectedClaim && (
               <div className={`grid grid-cols-1 lg:grid-cols-5 gap-4 p-5 ${cardClassName}`}>
                 <div className="lg:col-span-2 flex flex-col gap-2">
@@ -417,12 +416,12 @@ export default function OfficePortalPage() {
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 border-t border-slate-800/80 pt-4">
                       <div>
-                        <label htmlFor="bureau-account-allocation" className="mb-1 block text-[10px] font-medium uppercase tracking-wider text-slate-400">Allocate Account Number</label>
-                        <input id="bureau-account-allocation" type="text" value={accountNumberInput} onChange={(e) => setAccountNumberInput(e.target.value)} placeholder="e.g. ACC-20649" className={inputClassName} disabled={currentRole !== "admin" || updating} />
+                        <label htmlFor="bureau-account-input" className="mb-1 block text-[10px] font-medium uppercase tracking-wider text-slate-400">Allocate Account Number</label>
+                        <input id="bureau-account-input" type="text" value={accountNumberInput} onChange={(e) => setAccountNumberInput(e.target.value)} placeholder="e.g. ACC-20649" className={inputClassName} disabled={currentRole !== "admin" || updating} />
                       </div>
                       <div>
-                        <label htmlFor="bureau-status-mapping" className="mb-1 block text-[10px] font-medium uppercase tracking-wider text-slate-400">Operational Status</label>
-                        <select id="bureau-status-mapping" value={targetStatus} onChange={(e) => setTargetStatus(e.target.value as ClaimStatus)} className={`${inputClassName} bg-slate-950`} disabled={currentRole !== "admin" || updating}>
+                        <label htmlFor="bureau-status-select" className="mb-1 block text-[10px] font-medium uppercase tracking-wider text-slate-400">Operational Status</label>
+                        <select id="bureau-status-select" value={targetStatus} onChange={(e) => setTargetStatus(e.target.value as ClaimStatus)} className={`${inputClassName} bg-slate-950`} disabled={currentRole !== "admin" || updating}>
                           <option value="captured">Captured (Awaiting bureau processing)</option>
                           <option value="billed">Billed (Pushed to medical aid)</option>
                           <option value="on_hold">On Hold (Flagged for review)</option>
