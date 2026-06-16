@@ -8,7 +8,7 @@ export default function AuthenticationGatePage() {
   const [password, setPassword] = useState("");
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
   
-  // Registration Metadata States
+  // Registration Form States
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [practiceNumber, setPracticeNumber] = useState("");
@@ -21,24 +21,15 @@ export default function AuthenticationGatePage() {
   const supabase = createClient();
   const hasCheckedSession = useRef(false);
 
-  // Safe checking loop bypass barrier with strict exception handling
+  // Insulated mounting session validation check
   useEffect(() => {
     async function checkExistingSession() {
       if (hasCheckedSession.current) return;
       hasCheckedSession.current = true;
 
       try {
-        // Safe check using getUser to prevent invalid refresh tokens from crashing the execution pipeline
         const { data: authData, error: authErr } = await supabase.auth.getUser();
-        
-        if (authErr) {
-          // Stale or invalid token caught. Silently sign out to purge broken browser cookies cleanly
-          console.warn("Stale auth context detected, cleaning cookies:", authErr.message);
-          await supabase.auth.signOut();
-          return;
-        }
-
-        if (!authData?.user) return;
+        if (authErr || !authData?.user) return;
 
         const { data: profile, error: profileErr } = await supabase
           .from("profiles")
@@ -54,7 +45,7 @@ export default function AuthenticationGatePage() {
           window.location.replace("/office");
         }
       } catch (err) {
-        console.error("Session mounting bypass trace logs:", err);
+        console.error("Session initialization log:", err);
       }
     }
     checkExistingSession();
@@ -73,7 +64,7 @@ export default function AuthenticationGatePage() {
 
     try {
       if (authMode === "login") {
-        // ── PORTAL SECURITY SIGN IN ──
+        // ── VERIFY USER LOGIN ──
         const { data: loginData, error: loginErr } = await supabase.auth.signInWithPassword({
           email: email.trim(),
           password: password.trim(),
@@ -89,7 +80,7 @@ export default function AuthenticationGatePage() {
           .single();
 
         if (profileErr || !profile) {
-          setError("Profile missing or unallocated in schema rows.");
+          setError("Your authorization is valid, but no matching practice profile rows were discovered.");
           return;
         }
 
@@ -99,7 +90,7 @@ export default function AuthenticationGatePage() {
           window.location.replace("/office");
         }
       } else {
-        // ── SECURE REGISTER CHAIN VIA POSTGRES TRIGGER ──
+        // ── EXECUTE REGISTRATION OVER AUTOMATED DATABASE TRIGGER ──
         if (!firstName.trim() || !lastName.trim()) {
           throw new Error("First name and surname fields are required.");
         }
@@ -118,27 +109,27 @@ export default function AuthenticationGatePage() {
         });
 
         if (registerErr) throw registerErr;
-        if (!registerData?.user) throw new Error("Could not construct authorization user signature.");
+        if (!registerData?.user) throw new Error("Could not initialize your user tracking security account.");
 
-        // Handshake for delayed validation states
+        // If your Supabase instance forces email confirmation links, display clean notification instructions
         if (registerData.session === null) {
-          setMessage("Account initialized! Check your inbox to verify and unlock your secure portal access.");
-          setFormReset();
+          setMessage("Practice profile token initialized! Please check your email inbox to verify your connection and access the portal.");
+          setFormClear();
           return;
         }
 
-        setMessage("System deployment complete. Session authorized.");
+        setMessage("Account created and verified. Synchronizing control portal environment...");
         window.location.replace("/dashboard");
       }
     } catch (err: any) {
-      console.error("Auth Exception Boundary Triggered:", err);
-      setError(err.message || "Credential processing failure.");
+      console.error("Authentication Gate Exception:", err);
+      setError(err.message || "Credential pipeline handshake error.");
     } finally {
       setProcessing(false);
     }
   };
 
-  const setFormReset = () => {
+  const setFormClear = () => {
     setEmail("");
     setPassword("");
     setFirstName("");
@@ -192,7 +183,7 @@ export default function AuthenticationGatePage() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 border-t border-slate-800/60 pt-3">
                 <div>
                   <label htmlFor="practice-num-input" className="block text-[10px] font-medium uppercase tracking-wider text-slate-400 mb-1">Practice Number</label>
-                  <input id="practice-num-input" type="text" value={practiceNumber} onChange={(e) => setPracticeNumber(e.target.value)} className="w-full rounded-sm border border-slate-700/80 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 outline-none focus:border-teal-500/70" placeholder="e.g. 0123456" />
+                  <input id="practice-num-input" type="text" value={practiceNumber} onChange={(e) => setPracticeNumber(e.target.value)} className="w-full rounded-sm border border-slate-700/80 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 outline-none focus:border-teal-500/70" placeholder="888888" />
                 </div>
                 <div>
                   <label htmlFor="specialty-select" className="block text-[10px] font-medium uppercase tracking-wider text-slate-400 mb-1">Clinical Field</label>
