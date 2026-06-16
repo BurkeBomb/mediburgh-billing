@@ -1,62 +1,54 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import { createClient } from "@/utils/supabase";
+import { createProxyClient } from "@/utils/supabase-proxy";
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // Track the tactical application routes
   const isDashboardRoute = pathname.startsWith("/dashboard");
   const isOfficeRoute = pathname.startsWith("/office");
 
-  // Pass immediately if we are targeting the root gateway, authentication forms, or public files
   if (!isDashboardRoute && !isOfficeRoute) {
     return NextResponse.next();
   }
 
-  const supabase = createClient();
+  const response = NextResponse.next({ request });
+  const supabase = createProxyClient(request, response);
 
-  // Inspect cookies for active authenticated tokens
-  const { data: { session } } = await supabase.auth.getSession();
+  const { data: claims, error: claimsError } = await supabase.auth.getClaims();
 
-  // If unauthenticated, bounce back to login gate and cache source path
-  if (!session) {
+  if (claimsError || !claims?.claims?.sub) {
     const loginUrl = new URL("/", request.url);
     loginUrl.searchParams.set("redirectedFrom", pathname);
     return NextResponse.redirect(loginUrl);
   }
 
   try {
-    // Read user role directly out of secure profile tables
     const { data: profile } = await supabase
       .from("profiles")
       .select("role")
-      .eq("id", session.user.id)
+      .eq("id", claims.claims.sub)
       .single();
 
     if (!profile) {
       return NextResponse.redirect(new URL("/", request.url));
     }
 
-    // Strict boundary enforcement engine
     if (isDashboardRoute && profile.role !== "practitioner") {
-      // Office worker or admin attempting to touch clinical entry forms -> Route to desk
       return NextResponse.redirect(new URL("/office", request.url));
     }
 
     if (isOfficeRoute && profile.role === "practitioner") {
-      // Practitioner trying to peek at adjudication workflows -> Bounce to theatre dashboard
       return NextResponse.redirect(new URL("/dashboard", request.url));
     }
   } catch (err) {
-    console.error("Middleware authorization boundary breach intercepted:", err);
+    console.error("Proxy authorization boundary error:", err);
     return NextResponse.redirect(new URL("/", request.url));
   }
 
-  return NextResponse.next();
+  return response;
 }
 
-// Don't intercept static assets or Next.js core internal files
 export const config = {
   matcher: ["/dashboard/:path*", "/office/:path*"],
 };

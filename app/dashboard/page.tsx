@@ -4,6 +4,10 @@ import { DragEvent, useCallback, useMemo, useRef, useState, useEffect } from "re
 import { createClient } from "@/utils/supabase";
 import icd10Database from "@/data/ICD10.json";
 
+function getErrorMessage(err: unknown, fallback: string) {
+  return err instanceof Error ? err.message : fallback;
+}
+
 type ClaimStatus = "captured" | "on_hold";
 
 interface ClaimFormState {
@@ -186,7 +190,7 @@ export default function DashboardPage() {
       }
     }
     fetchLiveMetrics();
-  }, [submittedCount, holdCount]);
+  }, [submittedCount, holdCount, supabase]);
 
   const ticketCounts = useMemo(() => {
     return {
@@ -361,10 +365,16 @@ export default function DashboardPage() {
     try {
       let uploadedImageUrl = null;
 
+      const { data: authData, error: authError } = await supabase.auth.getUser();
+      if (authError || !authData.user) {
+        throw new Error("Session verification failed. Please re-authenticate via the portal gateway.");
+      }
+      const currentUserId = authData.user.id;
+
       if (imageFile) {
         const fileExt = imageFile.name.split(".").pop();
         const secureFileName = `${crypto.randomUUID()}.${fileExt}`;
-        const targetPath = `${secureFileName}`;
+        const targetPath = `${currentUserId}/${secureFileName}`;
 
         const { error: uploadError } = await supabase.storage
           .from("claim-attachments")
@@ -381,12 +391,6 @@ export default function DashboardPage() {
 
         uploadedImageUrl = publicUrlData.publicUrl;
       }
-
-      const { data: authData, error: authError } = await supabase.auth.getUser();
-      if (authError || !authData.user) {
-        throw new Error("Session verification failed. Please re-authenticate via the portal gateway.");
-      }
-      const currentUserId = authData.user.id;
 
       const cleanedModifiers = form.modifiers
         ? form.modifiers.split(",").map((m) => m.trim()).filter((m) => m.length > 0)
@@ -438,9 +442,9 @@ export default function DashboardPage() {
       }
 
       resetForm();
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Critical submission break logged:", err);
-      setError(err.message || "An issue disrupted the server communication lane. Data preserved locally.");
+      setError(getErrorMessage(err, "An issue disrupted the server communication lane. Data preserved locally."));
       setStatusMessage(null);
     } finally {
       setIsSaving(false);
@@ -560,6 +564,7 @@ export default function DashboardPage() {
                       )}
                     </div>
                     <div className="flex-1 overflow-hidden rounded-sm border border-slate-800 bg-slate-950/70">
+                      {/* eslint-disable-next-line @next/next/no-img-element -- Local object URLs are not handled well by next/image. */}
                       <img src={imagePreviewUrl} alt="Hospital sheet preview" className="h-full max-h-[520px] w-full object-contain" />
                     </div>
                   </div>

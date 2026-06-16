@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/utils/supabase";
 
 interface NavigationShellProps {
@@ -11,7 +11,7 @@ interface NavigationShellProps {
 export default function NavigationShell({ children, currentPath }: NavigationShellProps) {
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [userRole, setUserRole] = useState<string | null>(null);
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
 
   useEffect(() => {
     async function readActiveSession() {
@@ -31,7 +31,7 @@ export default function NavigationShell({ children, currentPath }: NavigationShe
       }
     }
     readActiveSession();
-  }, []);
+  }, [supabase]);
 
   const handleSignOut = async () => {
     await supabase.auth.signOut();

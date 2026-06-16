@@ -3,6 +3,10 @@
 import { useState, useEffect, useRef } from "react";
 import { createClient } from "@/utils/supabase";
 
+function getErrorMessage(err: unknown, fallback: string) {
+  return err instanceof Error ? err.message : fallback;
+}
+
 export default function AuthenticationGatePage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -49,7 +53,7 @@ export default function AuthenticationGatePage() {
       }
     }
     checkExistingSession();
-  }, []);
+  }, [supabase]);
 
   const handleAuthenticationSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -121,9 +125,9 @@ export default function AuthenticationGatePage() {
         setMessage("Account created and verified. Synchronizing control portal environment...");
         window.location.replace("/dashboard");
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Authentication Gate Exception:", err);
-      setError(err.message || "Credential pipeline handshake error.");
+      setError(getErrorMessage(err, "Credential pipeline handshake error."));
     } finally {
       setProcessing(false);
     }

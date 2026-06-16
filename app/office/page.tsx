@@ -5,6 +5,18 @@ import { createClient } from "@/utils/supabase";
 
 type OfficeRole = "worker" | "admin";
 type ClaimStatus = "captured" | "billed" | "incomplete" | "on_hold";
+type StatusFilter = ClaimStatus | "all";
+type TicketPriority = "open" | "urgent";
+
+const statusFilters: StatusFilter[] = ["all", "captured", "billed", "on_hold", "incomplete"];
+
+function getErrorMessage(err: unknown, fallback: string) {
+  return err instanceof Error ? err.message : fallback;
+}
+
+function toTicketPriority(value: string): TicketPriority {
+  return value === "urgent" ? "urgent" : "open";
+}
 
 interface ClientProfile {
   id: string;
@@ -45,7 +57,7 @@ const inputClassName =
   "w-full rounded-sm border border-slate-700/80 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 outline-none transition focus:border-teal-500/70 focus:ring-1 focus:ring-teal-500/40";
 
 export default function OfficePortalPage() {
-  const [currentRole, setCurrentRole] = useState<OfficeRole>("admin");
+  const [currentRole, setCurrentRole] = useState<OfficeRole>("worker");
   
   const [clients, setClients] = useState<ClientProfile[]>([]);
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
@@ -53,13 +65,13 @@ export default function OfficePortalPage() {
   const [selectedClaim, setSelectedClaim] = useState<ClaimRecord | null>(null);
   const [auditLogs, setAuditLogs] = useState<AuditLogRecord[]>([]);
 
-  const [statusFilter, setStatusFilter] = useState<ClaimStatus | "all">("all");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [accountNumberInput, setAccountNumberInput] = useState("");
   const [targetStatus, setTargetStatus] = useState<ClaimStatus>("billed");
 
   const [ticketSubject, setTicketSubject] = useState("");
   const [ticketPreview, setTicketPreview] = useState("");
-  const [ticketPriority, setTicketPriority] = useState<"open" | "urgent">("open");
+  const [ticketPriority, setTicketPriority] = useState<TicketPriority>("open");
 
   const [loading, setLoading] = useState(false);
   const [updating, setUpdating] = useState(false);
@@ -74,6 +86,17 @@ export default function OfficePortalPage() {
       setLoading(true);
       setError(null);
       try {
+        const { data: authData } = await supabase.auth.getUser();
+        if (authData.user) {
+          const { data: activeProfile } = await supabase
+            .from("profiles")
+            .select("role")
+            .eq("id", authData.user.id)
+            .single();
+
+          setCurrentRole(activeProfile?.role === "admin" ? "admin" : "worker");
+        }
+
         const { data, error: fetchErr } = await supabase
           .from("profiles")
           .select("id, name, surname, practice_number, specialty, email")
@@ -85,7 +108,7 @@ export default function OfficePortalPage() {
         if (data && data.length > 0) {
           setSelectedClientId(data[0].id);
         }
-      } catch (err: any) {
+      } catch (err: unknown) {
         console.error("Failed to fetch clients list:", err);
         setError("Could not download practitioner registry.");
       } finally {
@@ -93,7 +116,7 @@ export default function OfficePortalPage() {
       }
     }
     fetchPractitioners();
-  }, []);
+  }, [supabase]);
 
   // 2. Fetch claims associated with selected practitioner profile
   useEffect(() => {
@@ -101,7 +124,6 @@ export default function OfficePortalPage() {
 
     async function fetchClientClaims() {
       setError(null);
-      setSelectedClaim(null);
       try {
         const { data, error: claimsErr } = await supabase
           .from("claims")
@@ -111,18 +133,17 @@ export default function OfficePortalPage() {
 
         if (claimsErr) throw claimsErr;
         setClaims(data || []);
-      } catch (err: any) {
+      } catch (err: unknown) {
         console.error("Failed to load claims queue:", err);
         setError("Error pulling claim queue for selected practice.");
       }
     }
     fetchClientClaims();
-  }, [selectedClientId]);
+  }, [selectedClientId, supabase]);
 
   // 3. Populate audit trail ledger historical logs
   useEffect(() => {
     if (!selectedClaim) {
-      setAuditLogs([]);
       return;
     }
 
@@ -144,12 +165,20 @@ export default function OfficePortalPage() {
       }
     }
     fetchClaimHistory();
-  }, [selectedClaim]);
+  }, [selectedClaim, supabase]);
 
   const handleSelectClaim = (claim: ClaimRecord) => {
     setSelectedClaim(claim);
+    setAuditLogs([]);
     setAccountNumberInput(claim.account_number || "");
     setTargetStatus(claim.status);
+    setSuccessMessage(null);
+  };
+
+  const handleSelectClient = (clientId: string) => {
+    setSelectedClientId(clientId);
+    setSelectedClaim(null);
+    setAuditLogs([]);
     setSuccessMessage(null);
   };
 
@@ -189,8 +218,8 @@ export default function OfficePortalPage() {
       setSuccessMessage("Claim parameters successfully committed and logged.");
       setClaims(prev => prev.map(c => c.id === selectedClaim.id ? { ...c, account_number: accountNumberInput.trim() || null, status: targetStatus } : c));
       setSelectedClaim(prev => prev ? { ...prev, account_number: accountNumberInput.trim() || null, status: targetStatus } : null);
-    } catch (err: any) {
-      setError(err.message || "Could not push structural modifications back to the server.");
+    } catch (err: unknown) {
+      setError(getErrorMessage(err, "Could not push structural modifications back to the server."));
     } finally {
       setUpdating(false);
     }
@@ -222,8 +251,8 @@ export default function OfficePortalPage() {
       setSuccessMessage("Operational alert ticket pushed cleanly down to practitioner layout.");
       setTicketSubject("");
       setTicketPreview("");
-    } catch (err: any) {
-      setError(err.message || "Failed to push message token.");
+    } catch (err: unknown) {
+      setError(getErrorMessage(err, "Failed to push message token."));
     }
   };
 
@@ -255,8 +284,8 @@ export default function OfficePortalPage() {
           <div className="flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-2 rounded-sm border border-slate-800 bg-slate-900/40 p-2">
               <span className="text-xs font-medium uppercase tracking-wider text-slate-400 px-2">Access Profile:</span>
-              <button type="button" onClick={() => { setCurrentRole("worker"); setError(null); }} className={`rounded-sm px-3 py-1 text-xs font-semibold uppercase tracking-wider transition ${currentRole === "worker" ? "bg-slate-700 text-white border border-slate-500" : "text-slate-500 hover:text-slate-300"}`}>Worker</button>
-              <button type="button" onClick={() => { setCurrentRole("admin"); setError(null); }} className={`rounded-sm px-3 py-1 text-xs font-semibold uppercase tracking-wider transition ${currentRole === "admin" ? "bg-teal-600 text-white border border-teal-400" : "text-slate-500 hover:text-teal-400"}`}>Admin</button>
+              <span className={`rounded-sm px-3 py-1 text-xs font-semibold uppercase tracking-wider ${currentRole === "worker" ? "bg-slate-700 text-white border border-slate-500" : "text-slate-500"}`}>Worker</span>
+              <span className={`rounded-sm px-3 py-1 text-xs font-semibold uppercase tracking-wider ${currentRole === "admin" ? "bg-teal-600 text-white border border-teal-400" : "text-slate-500"}`}>Admin</span>
             </div>
 
             <button
@@ -287,7 +316,7 @@ export default function OfficePortalPage() {
                 <ul className="divide-y divide-slate-800/40 max-h-[320px] overflow-y-auto">
                   {clients.map(client => (
                     <li key={client.id}>
-                      <button type="button" onClick={() => setSelectedClientId(client.id)} className={`w-full text-left px-4 py-3.5 transition flex flex-col gap-1 hover:bg-slate-950/30 ${selectedClientId === client.id ? "bg-slate-950/40 border-l-2 border-teal-500" : ""}`}>
+                      <button type="button" onClick={() => handleSelectClient(client.id)} className={`w-full text-left px-4 py-3.5 transition flex flex-col gap-1 hover:bg-slate-950/30 ${selectedClientId === client.id ? "bg-slate-950/40 border-l-2 border-teal-500" : ""}`}>
                         <span className="text-sm font-medium text-slate-200">Dr {client.name} {client.surname}</span>
                         <span className="text-xs font-mono text-slate-500 flex justify-between">
                           <span>PR: {client.practice_number || "—"}</span>
@@ -316,7 +345,7 @@ export default function OfficePortalPage() {
                 </div>
                 <div>
                   <label htmlFor="bureau-ticket-priority" className="block text-[9px] uppercase font-medium tracking-wider text-slate-400 mb-1">Priority Layer</label>
-                  <select id="bureau-ticket-priority" value={ticketPriority} onChange={(e) => setTicketPriority(e.target.value as any)} className={`${inputClassName} bg-slate-950`}>
+                  <select id="bureau-ticket-priority" value={ticketPriority} onChange={(e) => setTicketPriority(toTicketPriority(e.target.value))} className={`${inputClassName} bg-slate-950`}>
                     <option value="open">Standard Open Alert</option>
                     <option value="urgent">Urgent Operational Check</option>
                   </select>
@@ -333,8 +362,8 @@ export default function OfficePortalPage() {
                   Incoming Queue — {selectedClientDetails ? `Dr ${selectedClientDetails.name} ${selectedClientDetails.surname}` : "Selection Pending"}
                 </h2>
                 <div className="flex flex-wrap gap-1 bg-slate-950/50 p-1 rounded-sm border border-slate-800">
-                  {["all", "captured", "billed", "on_hold", "incomplete"].map(st => (
-                    <button key={st} type="button" onClick={() => setStatusFilter(st as any)} className={`px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider transition ${statusFilter === st ? "bg-slate-800 text-teal-400" : "text-slate-500 hover:text-slate-300"}`}>{st}</button>
+                  {statusFilters.map(st => (
+                    <button key={st} type="button" onClick={() => setStatusFilter(st)} className={`px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider transition ${statusFilter === st ? "bg-slate-800 text-teal-400" : "text-slate-500 hover:text-slate-300"}`}>{st}</button>
                   ))}
                 </div>
               </div>
@@ -390,7 +419,10 @@ export default function OfficePortalPage() {
                 <div className="lg:col-span-2 flex flex-col gap-2">
                   <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Document Image Verification</p>
                   <div className="flex-1 min-h-[340px] max-h-[460px] rounded-sm border border-slate-800 bg-slate-950 flex items-center justify-center overflow-hidden p-2">
-                    {selectedClaim.image_url ? <img src={selectedClaim.image_url} alt="Verification frame" className="h-full w-full object-contain hover:scale-105 transition" /> : <p className="text-xs text-slate-600 italic">No image attached.</p>}
+                    {selectedClaim.image_url ? (
+                      // eslint-disable-next-line @next/next/no-img-element -- Supabase-hosted claim documents may need auth/storage policy handling outside next/image.
+                      <img src={selectedClaim.image_url} alt="Verification frame" className="h-full w-full object-contain hover:scale-105 transition" />
+                    ) : <p className="text-xs text-slate-600 italic">No image attached.</p>}
                   </div>
                 </div>
 

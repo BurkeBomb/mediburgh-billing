@@ -5,10 +5,13 @@ let clientInstance: ReturnType<typeof createBrowserClient> | null = null;
 export function createClient() {
   if (clientInstance) return clientInstance;
 
-  // Paste your literal database strings from your Supabase dashboard inside these quotes:
-  const url = "https://sibqhgpmuazshlexzspa.supabase.co";
-  const anonKey = "sb_publishable_tXCkAi6O3Rmy3qpwrcXUdg_KlU8Hrrq";
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const publishableKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
 
-  clientInstance = createBrowserClient(url, anonKey);
+  if (!url || !publishableKey) {
+    throw new Error("Missing Supabase browser environment variables.");
+  }
+
+  clientInstance = createBrowserClient(url, publishableKey);
   return clientInstance;
 }
