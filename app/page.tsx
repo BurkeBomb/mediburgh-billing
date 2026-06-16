@@ -21,15 +21,24 @@ export default function AuthenticationGatePage() {
   const supabase = createClient();
   const hasCheckedSession = useRef(false);
 
-  // Safe checking loop bypass barrier
+  // Safe checking loop bypass barrier with strict exception handling
   useEffect(() => {
     async function checkExistingSession() {
       if (hasCheckedSession.current) return;
       hasCheckedSession.current = true;
 
       try {
+        // Safe check using getUser to prevent invalid refresh tokens from crashing the execution pipeline
         const { data: authData, error: authErr } = await supabase.auth.getUser();
-        if (authErr || !authData?.user) return;
+        
+        if (authErr) {
+          // Stale or invalid token caught. Silently sign out to purge broken browser cookies cleanly
+          console.warn("Stale auth context detected, cleaning cookies:", authErr.message);
+          await supabase.auth.signOut();
+          return;
+        }
+
+        if (!authData?.user) return;
 
         const { data: profile, error: profileErr } = await supabase
           .from("profiles")
@@ -111,9 +120,9 @@ export default function AuthenticationGatePage() {
         if (registerErr) throw registerErr;
         if (!registerData?.user) throw new Error("Could not construct authorization user signature.");
 
-        // If email confirmation is enabled, guide them cleanly
+        // Handshake for delayed validation states
         if (registerData.session === null) {
-          setMessage("Account initialized! Check your email inbox to verify and unlock your secure portal access.");
+          setMessage("Account initialized! Check your inbox to verify and unlock your secure portal access.");
           setFormReset();
           return;
         }
