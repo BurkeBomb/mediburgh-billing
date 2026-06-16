@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { createClient } from "@/utils/supabase";
 
 export default function AuthenticationGatePage() {
@@ -8,6 +8,7 @@ export default function AuthenticationGatePage() {
   const [password, setPassword] = useState("");
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
   
+  // Registration Metadata States
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [practiceNumber, setPracticeNumber] = useState("");
@@ -18,37 +19,37 @@ export default function AuthenticationGatePage() {
   const [message, setMessage] = useState<string | null>(null);
 
   const supabase = createClient();
+  const hasCheckedSession = useRef(false);
 
+  // Safe checking loop bypass barrier
   useEffect(() => {
     async function checkExistingSession() {
-      const { data: authData } = await supabase.auth.getUser();
-      if (authData?.user) {
-        handleRoleDirection(authData.user.id);
+      if (hasCheckedSession.current) return;
+      hasCheckedSession.current = true;
+
+      try {
+        const { data: authData, error: authErr } = await supabase.auth.getUser();
+        if (authErr || !authData?.user) return;
+
+        const { data: profile, error: profileErr } = await supabase
+          .from("profiles")
+          .select("role")
+          .eq("id", authData.user.id)
+          .single();
+
+        if (profileErr || !profile) return;
+
+        if (profile.role === "practitioner") {
+          window.location.replace("/dashboard");
+        } else {
+          window.location.replace("/office");
+        }
+      } catch (err) {
+        console.error("Session mounting bypass trace logs:", err);
       }
     }
     checkExistingSession();
   }, []);
-
-  const handleRoleDirection = async (userId: string) => {
-    try {
-      const { data: profile, error: profileErr } = await supabase
-        .from("profiles")
-        .select("role")
-        .eq("id", userId)
-        .single();
-
-      if (profileErr || !profile) throw new Error("Practice configuration profile row missing.");
-
-      if (profile.role === "practitioner") {
-        window.location.href = "/dashboard";
-      } else {
-        window.location.href = "/office";
-      }
-    } catch (err: any) {
-      setError("Authorization routing error. Profile row sync failure.");
-      await supabase.auth.signOut();
-    }
-  };
 
   const handleAuthenticationSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -63,66 +64,77 @@ export default function AuthenticationGatePage() {
 
     try {
       if (authMode === "login") {
+        // ── PORTAL SECURITY SIGN IN ──
         const { data: loginData, error: loginErr } = await supabase.auth.signInWithPassword({
           email: email.trim(),
           password: password.trim(),
         });
 
         if (loginErr) throw loginErr;
-        if (loginData?.user) {
-          handleRoleDirection(loginData.user.id);
-        }
-      } else {
-        if (!firstName.trim() || !lastName.trim()) {
-          throw new Error("First name and surname fields are required for profile generation.");
+        if (!loginData?.user) throw new Error("Invalid credential payload.");
+
+        const { data: profile, error: profileErr } = await supabase
+          .from("profiles")
+          .select("role")
+          .eq("id", loginData.user.id)
+          .single();
+
+        if (profileErr || !profile) {
+          setError("Profile missing or unallocated in schema rows.");
+          return;
         }
 
-        // 1. Sign up the user via Supabase Auth Auth Engine
+        if (profile.role === "practitioner") {
+          window.location.replace("/dashboard");
+        } else {
+          window.location.replace("/office");
+        }
+      } else {
+        // ── SECURE REGISTER CHAIN VIA POSTGRES TRIGGER ──
+        if (!firstName.trim() || !lastName.trim()) {
+          throw new Error("First name and surname fields are required.");
+        }
+
         const { data: registerData, error: registerErr } = await supabase.auth.signUp({
           email: email.trim(),
           password: password.trim(),
-        });
-
-        if (registerErr) throw registerErr;
-        if (!registerData?.user) throw new Error("Could not initialize authentication credentials.");
-
-        const newlyCreatedUserId = registerData.user.id;
-
-        // 2. Explicitly log the client instance in to pop the auth context tokens safely for RLS verification
-        await supabase.auth.signInWithPassword({
-          email: email.trim(),
-          password: password.trim(),
-        });
-
-        // 3. Populate profile record with full clearance parameters
-        const { error: profileCreateErr } = await supabase
-          .from("profiles")
-          .insert([
-            {
-              id: newlyCreatedUserId,
+          options: {
+            data: {
               name: firstName.trim(),
               surname: lastName.trim(),
               practice_number: practiceNumber.trim() || null,
-              specialty: specialty,
-              email: email.trim().toLowerCase(),
-              role: "practitioner",
-            },
-          ]);
+              specialty: specialty
+            }
+          }
+        });
 
-        if (profileCreateErr) {
-          console.error("Profile creation write error detailed:", profileCreateErr);
-          throw new Error(`Auth credentials generated, but profile synchronization was blocked: ${profileCreateErr.message}`);
+        if (registerErr) throw registerErr;
+        if (!registerData?.user) throw new Error("Could not construct authorization user signature.");
+
+        // If email confirmation is enabled, guide them cleanly
+        if (registerData.session === null) {
+          setMessage("Account initialized! Check your email inbox to verify and unlock your secure portal access.");
+          setFormReset();
+          return;
         }
-        
-        setMessage("Secure practice registration complete. Accessing control panel...");
-        handleRoleDirection(newlyCreatedUserId);
+
+        setMessage("System deployment complete. Session authorized.");
+        window.location.replace("/dashboard");
       }
     } catch (err: any) {
-      console.error("Auth transaction anomaly logged:", err);
-      setError(err.message || "Credential verification pipeline handshake failed.");
+      console.error("Auth Exception Boundary Triggered:", err);
+      setError(err.message || "Credential processing failure.");
     } finally {
       setProcessing(false);
     }
+  };
+
+  const setFormReset = () => {
+    setEmail("");
+    setPassword("");
+    setFirstName("");
+    setLastName("");
+    setPracticeNumber("");
   };
 
   return (
@@ -140,7 +152,7 @@ export default function AuthenticationGatePage() {
         </div>
 
         <div className="rounded-sm border border-slate-800/90 bg-slate-900/40 p-6 shadow-[0_24px_64px_rgba(0,0,0,0.5)] backdrop-blur-sm">
-          {error && <div className="mb-4 rounded-sm border border-red-500/30 bg-red-950/20 px-3 py-2 text-xs text-red-300">{error}</div>}
+          {error && <div className="mb-4 rounded-sm border border-red-500/40 bg-red-950/30 px-3 py-2 text-xs text-red-200">{error}</div>}
           {message && <div className="mb-4 rounded-sm border border-teal-500/30 bg-teal-950/20 px-3 py-2 text-xs text-teal-200">{message}</div>}
 
           <form onSubmit={handleAuthenticationSubmit} className="space-y-4">
@@ -148,34 +160,34 @@ export default function AuthenticationGatePage() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label htmlFor="first-name-input" className="block text-[10px] font-medium uppercase tracking-wider text-slate-400 mb-1">First Name</label>
-                  <input id="first-name-input" type="text" value={firstName} onChange={(e) => setFirstName(e.target.value)} className="w-full rounded-sm border border-slate-700/80 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-teal-500/70" placeholder="Xander" required />
+                  <input id="first-name-input" type="text" value={firstName} onChange={(e) => setFirstName(e.target.value)} className="w-full rounded-sm border border-slate-700/80 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 outline-none focus:border-teal-500/70" placeholder="Xander" required />
                 </div>
                 <div>
                   <label htmlFor="last-name-input" className="block text-[10px] font-medium uppercase tracking-wider text-slate-400 mb-1">Surname</label>
-                  <input id="last-name-input" type="text" value={lastName} onChange={(e) => setLastName(e.target.value)} className="w-full rounded-sm border border-slate-700/80 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-teal-500/70" placeholder="Burke" required />
+                  <input id="last-name-input" type="text" value={lastName} onChange={(e) => setLastName(e.target.value)} className="w-full rounded-sm border border-slate-700/80 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 outline-none focus:border-teal-500/70" placeholder="Burke" required />
                 </div>
               </div>
             )}
 
             <div>
               <label htmlFor="auth-email-input" className="block text-[10px] font-medium uppercase tracking-wider text-slate-400 mb-1">Email Address</label>
-              <input id="auth-email-input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full rounded-sm border border-slate-700/80 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-teal-500/70" placeholder="xander@mediburgh.co.za" required />
+              <input id="auth-email-input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full rounded-sm border border-slate-700/80 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 outline-none focus:border-teal-500/70" placeholder="xander@mediburgh.co.za" required />
             </div>
 
             <div>
               <label htmlFor="auth-password-input" className="block text-[10px] font-medium uppercase tracking-wider text-slate-400 mb-1">Password</label>
-              <input id="auth-password-input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full rounded-sm border border-slate-700/80 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-teal-500/70" placeholder="••••••••••••" required />
+              <input id="auth-password-input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full rounded-sm border border-slate-700/80 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 outline-none focus:border-teal-500/70" placeholder="••••••••••••" required />
             </div>
 
             {authMode === "register" && (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 border-t border-slate-800/60 pt-3">
                 <div>
                   <label htmlFor="practice-num-input" className="block text-[10px] font-medium uppercase tracking-wider text-slate-400 mb-1">Practice Number</label>
-                  <input id="practice-num-input" type="text" value={practiceNumber} onChange={(e) => setPracticeNumber(e.target.value)} className="w-full rounded-sm border border-slate-700/80 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-teal-500/70" placeholder="e.g. 0123456" />
+                  <input id="practice-num-input" type="text" value={practiceNumber} onChange={(e) => setPracticeNumber(e.target.value)} className="w-full rounded-sm border border-slate-700/80 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 outline-none focus:border-teal-500/70" placeholder="e.g. 0123456" />
                 </div>
                 <div>
                   <label htmlFor="specialty-select" className="block text-[10px] font-medium uppercase tracking-wider text-slate-400 mb-1">Clinical Field</label>
-                  <select id="specialty-select" value={specialty} onChange={(e) => setSpecialty(e.target.value)} className="w-full rounded-sm border border-slate-700/80 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-teal-500/70">
+                  <select id="specialty-select" value={specialty} onChange={(e) => setSpecialty(e.target.value)} className="w-full rounded-sm border border-slate-700/80 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none focus:border-teal-500/70">
                     <option value="General Anesthesia">Anesthesiology</option>
                     <option value="Orthopedic Surgery">Orthopedic Surgery</option>
                     <option value="Clinical Technology">Clinical Technology</option>
