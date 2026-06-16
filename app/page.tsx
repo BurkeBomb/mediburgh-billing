@@ -8,7 +8,6 @@ export default function AuthenticationGatePage() {
   const [password, setPassword] = useState("");
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
   
-  // Registration Profile Metadata States
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [practiceNumber, setPracticeNumber] = useState("");
@@ -20,7 +19,6 @@ export default function AuthenticationGatePage() {
 
   const supabase = createClient();
 
-  // Route authenticated session configurations instantly on mount
   useEffect(() => {
     async function checkExistingSession() {
       const { data: authData } = await supabase.auth.getUser();
@@ -65,7 +63,6 @@ export default function AuthenticationGatePage() {
 
     try {
       if (authMode === "login") {
-        // ── EXECUTE SECURE PORTAL LOGIN ──
         const { data: loginData, error: loginErr } = await supabase.auth.signInWithPassword({
           email: email.trim(),
           password: password.trim(),
@@ -76,39 +73,49 @@ export default function AuthenticationGatePage() {
           handleRoleDirection(loginData.user.id);
         }
       } else {
-        // ── EXECUTE SECURE REGISTRATION FLOW ──
         if (!firstName.trim() || !lastName.trim()) {
           throw new Error("First name and surname fields are required for profile generation.");
         }
 
+        // 1. Sign up the user via Supabase Auth Auth Engine
         const { data: registerData, error: registerErr } = await supabase.auth.signUp({
           email: email.trim(),
           password: password.trim(),
         });
 
         if (registerErr) throw registerErr;
+        if (!registerData?.user) throw new Error("Could not initialize authentication credentials.");
 
-        if (registerData?.user) {
-          // Write explicit structural data parameters to profiles relation table
-          const { error: profileCreateErr } = await supabase
-            .from("profiles")
-            .insert([
-              {
-                id: registerData.user.id,
-                name: firstName.trim(),
-                surname: lastName.trim(),
-                practice_number: practiceNumber.trim() || null,
-                specialty: specialty,
-                email: email.trim().toLowerCase(),
-                role: "practitioner", // Default signups to clinical theater interface tracking
-              },
-            ]);
+        const newlyCreatedUserId = registerData.user.id;
 
-          if (profileCreateErr) throw profileCreateErr;
-          
-          setMessage("Secure practice registration complete. Accessing control panel...");
-          handleRoleDirection(registerData.user.id);
+        // 2. Explicitly log the client instance in to pop the auth context tokens safely for RLS verification
+        await supabase.auth.signInWithPassword({
+          email: email.trim(),
+          password: password.trim(),
+        });
+
+        // 3. Populate profile record with full clearance parameters
+        const { error: profileCreateErr } = await supabase
+          .from("profiles")
+          .insert([
+            {
+              id: newlyCreatedUserId,
+              name: firstName.trim(),
+              surname: lastName.trim(),
+              practice_number: practiceNumber.trim() || null,
+              specialty: specialty,
+              email: email.trim().toLowerCase(),
+              role: "practitioner",
+            },
+          ]);
+
+        if (profileCreateErr) {
+          console.error("Profile creation write error detailed:", profileCreateErr);
+          throw new Error(`Auth credentials generated, but profile synchronization was blocked: ${profileCreateErr.message}`);
         }
+        
+        setMessage("Secure practice registration complete. Accessing control panel...");
+        handleRoleDirection(newlyCreatedUserId);
       }
     } catch (err: any) {
       console.error("Auth transaction anomaly logged:", err);
@@ -120,7 +127,6 @@ export default function AuthenticationGatePage() {
 
   return (
     <div className="relative min-h-screen flex flex-col justify-center items-center bg-[#0b0f14] px-4 py-12 sm:px-6 lg:px-8 overflow-hidden">
-      {/* Visual Aesthetic Layers */}
       <div aria-hidden className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_80%_50%_at_50%_-20%,rgba(20,184,166,0.12),transparent)]" />
       <div aria-hidden className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_bottom,rgba(15,23,42,0.1),transparent_40%,rgba(11,15,20,1))]" />
 
@@ -130,26 +136,16 @@ export default function AuthenticationGatePage() {
           <h2 className="mt-2 text-2xl font-bold tracking-tight text-white">
             {authMode === "login" ? "Access Secure Terminal" : "Register Practice Token"}
           </h2>
-          <p className="mt-1 text-xs text-slate-500">
-            Continuous real-time clinical submission infrastructure
-          </p>
+          <p className="mt-1 text-xs text-slate-500">Continuous real-time clinical submission infrastructure</p>
         </div>
 
         <div className="rounded-sm border border-slate-800/90 bg-slate-900/40 p-6 shadow-[0_24px_64px_rgba(0,0,0,0.5)] backdrop-blur-sm">
-          {error && (
-            <div className="mb-4 rounded-sm border border-red-500/30 bg-red-950/20 px-3 py-2 text-xs text-red-300">
-              {error}
-            </div>
-          )}
-          {message && (
-            <div className="mb-4 rounded-sm border border-teal-500/30 bg-teal-950/20 px-3 py-2 text-xs text-teal-200">
-              {message}
-            </div>
-          )}
+          {error && <div className="mb-4 rounded-sm border border-red-500/30 bg-red-950/20 px-3 py-2 text-xs text-red-300">{error}</div>}
+          {message && <div className="mb-4 rounded-sm border border-teal-500/30 bg-teal-950/20 px-3 py-2 text-xs text-teal-200">{message}</div>}
 
           <form onSubmit={handleAuthenticationSubmit} className="space-y-4">
             {authMode === "register" && (
-              <div className="grid grid-cols-2 gap-3 animation-fadeIn">
+              <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label htmlFor="first-name-input" className="block text-[10px] font-medium uppercase tracking-wider text-slate-400 mb-1">First Name</label>
                   <input id="first-name-input" type="text" value={firstName} onChange={(e) => setFirstName(e.target.value)} className="w-full rounded-sm border border-slate-700/80 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-teal-500/70" placeholder="Xander" required />
