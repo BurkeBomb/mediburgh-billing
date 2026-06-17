@@ -14,7 +14,7 @@ export interface ModifierOption {
 interface ClaimFormState {
   patientName: string;
   patientSurname: string;
-  medicalAid: string;
+  billingRate: string;
   procedureDescription: string;
   procedureCode: string;
   icd10Code: string;
@@ -61,7 +61,7 @@ const getTodayDateString = () => {
 const emptyForm = (): ClaimFormState => ({
   patientName: "",
   patientSurname: "",
-  medicalAid: "Discovery Health",
+  billingRate: "Medical aid rates/No Copay, Private, Practice Profile",
   procedureDescription: "",
   procedureCode: "",
   icd10Code: "",
@@ -86,23 +86,23 @@ const ALL_ICD10_CODES = (icd10Database?.Employees?.Employee || []) as IcdCodeIte
 
 const PRELOADED_MODIFIERS: ModifierOption[] = [
   { code: "0151", label: "Pre-anaesthetic assessment" },
-  { code: "0147 + 0011", label: "Emergency" },
+  { code: "0147 + 0011", label: "Emergency, Possible PMB-Confirm if reports are available (radiology, xrays, labs) as this will greatly expidite PMB review" },
   { code: "0039", label: "Blood Pressure Control" },
   { code: "0026", label: "One Lung Ventilation" },
-  { code: "0032", label: "Prone Position" },
+  { code: "0032", label: "Position other than supine or lithotomy" },
   { code: "0034", label: "Head, Neck and Shoulder" },
-  { code: "0038", label: "Blood salvage" },
+  { code: "0038", label: "Blood salvage/Cell saver" },
   { code: "0042", label: "Extra Corporeal Circulation" },
   { code: "0043", label: "Patients younger than 1 year or older than 70 years" },
   { code: "0044", label: "Neonates up to and including 28 days after birth" },
   { code: "0019", label: "Neonates with a low birthweight less than 2.5kg" },
   { code: "0018", label: "BMI higher than 35 (Indicate Height & Weight in notes below)" },
-  { code: "5441", label: "Orthopedic Modifier (Allocation 5441)" },
-  { code: "5442", label: "Orthopedic Modifier (Allocation 5442)" },
-  { code: "5443", label: "Orthopedic Modifier (Allocation 5443)" },
-  { code: "5444", label: "Orthopedic Modifier (Allocation 5444)" },
-  { code: "5445", label: "Orthopedic Modifier (Allocation 5445)" },
-  { code: "5448", label: "Orthopedic Modifier (Allocation 5448)" },
+  { code: "5441", label: "Orthopedic Modifier (Carpal, Tarsal, Wrist, Ankle, All bones and muscles not mentioned below)" },
+  { code: "5442", label: "Orthopedic Modifier (Shoulder, Scapula, Knee, Humerus, Clavicla, Upper 1/3 Tib/fib, Elbow, Mandible)" },
+  { code: "5443", label: "Orthopedic Modifier (Orbital)" },
+  { code: "5444", label: "Orthopedic Modifier (Shaft of Femur)" },
+  { code: "5445", label: "Orthopedic Modifier (Spine,(exc.cocyx), Hip, Pelvis, Ribs, Skull)" },
+  { code: "5448", label: "Orthopedic Modifier (Sternum)" },
   { code: "0109", label: "Hospital Follow up" },
   { code: "1204", label: "ICU care" },
   { code: "0007", label: "TCI" },
@@ -111,9 +111,9 @@ const PRELOADED_MODIFIERS: ModifierOption[] = [
   { code: "1220", label: "Hire fee PCA" },
   { code: "1221", label: "PCA pump" },
   { code: "1780", label: "NG tube" },
-  { code: "IV-UNDER-3", label: "Insertion IV line under 3 years" },
-  { code: "IV-ABOVE-3", label: "Insertion IV line above 3 years" },
-  { code: "EYE-BLOCK", label: "Eye Block" },
+  { code: "IV-UNDER-3", label: "Insertion IV line under 3 years. No Fee" },
+  { code: "IV-ABOVE-3", label: "Insertion IV line above 3 years, No Fee" },
+  { code: "EYE-BLOCK", label: "Eye Block+15min theatre time" },
   { code: "2800", label: "Plexus Nerve Block" },
   { code: "2801", label: "Epidural Injection" },
   { code: "2802", label: "Peripheral Nerve Block" },
@@ -132,11 +132,14 @@ const labelClassName =
 
 export default function DashboardPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const extraFileInputRef = useRef<HTMLInputElement>(null);
   const icdSearchRef = useRef<HTMLDivElement>(null);
 
   const [form, setForm] = useState<ClaimFormState>(emptyForm());
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
+  const [extraImageFile, setExtraImageFile] = useState<File | null>(null);
+  const [extraImagePreviewUrl, setExtraImagePreviewUrl] = useState<string | null>(null);
 
   const [icdSearch, setIcdSearch] = useState("");
   const [icdDropdownOpen, setIcdDropdownOpen] = useState(false);
@@ -165,7 +168,6 @@ export default function DashboardPage() {
     setForm(p => ({ ...p, bmiInfo: bmi }));
   }, [form.weight, form.height]);
 
-  // Defensively match query parameters to bypass null string runtime crashes
   const filteredIcdCodes = useMemo(() => {
     if (!icdSearch.trim()) return ALL_ICD10_CODES.slice(0, 10);
     const query = icdSearch.toLowerCase();
@@ -179,18 +181,26 @@ export default function DashboardPage() {
   const medicalAidWarnings = useMemo(() => {
     const warnings: string[] = [];
     const mods = form.modifiers.split(",").map(m => m.trim());
+    const procedureCodes = form.procedureCode.split(",").map(c => c.trim());
 
-    if (form.medicalAid === "GEMS" && mods.includes("0147 + 0011") && !form.extraNotes.toLowerCase().includes("emergency")) {
-      warnings.push("GEMS Rulebook Alert: Emergency modifiers require explicit supporting context inside the Extra Notes field.");
+    if (mods.includes("0147 + 0011") && !form.extraNotes.toLowerCase().includes("emergency")) {
+      warnings.push("Emergency modifiers require motivation and supporting reports to apply for PMB.");
     }
-    if (form.medicalAid === "Discovery Health" && parseFloat(form.bmiInfo) > 35 && !mods.includes("0018")) {
-      warnings.push("Discovery Rulebook Alert: A registered BMI > 35 requires the selection of Modifier 0018.");
+    if (parseFloat(form.bmiInfo) > 35 && !mods.includes("0018")) {
+      warnings.push("A registered BMI > 35 requires the selection of Modifier 0018.");
     }
+    
+    const diagnosticCodes = ["1587", "1653", "1493", "2207", "3047", "3058", "2137"];
+    const hasDiagnostic = procedureCodes.some(code => diagnosticCodes.includes(code));
+    if (mods.includes("0018") && hasDiagnostic) {
+      warnings.push("Diagnostic and non-surgical procedures may not be billed with 0018.");
+    }
+
     if (mods.includes("0043") && form.extraNotes.toLowerCase().indexOf("age") === -1) {
       warnings.push("Rule 0043 Warning: Patient age validation parameters must be clearly specified within your note layout.");
     }
     return warnings;
-  }, [form.medicalAid, form.modifiers, form.bmiInfo, form.extraNotes]);
+  }, [form.modifiers, form.bmiInfo, form.extraNotes, form.procedureCode]);
 
   useEffect(() => {
     function handleOutsideDropdownClicks(event: MouseEvent) {
@@ -232,12 +242,27 @@ export default function DashboardPage() {
         if (!authData?.user) return;
         const currentUserId = authData.user.id;
 
-        const { data: monthClaims } = await supabase.from("claims").select("status").eq("practitioner_id", currentUserId);
+        const { data: monthClaims } = await supabase
+          .from("claims")
+          .select("status")
+          .eq("practitioner_id", currentUserId);
+
         if (monthClaims) {
           setTotalClaimsCount(monthClaims.length);
-          setValueBilledTotal(monthClaims.length * 1250);
           const successful = monthClaims.filter((c: any) => c.status === "captured" || c.status === "billed").length;
           setPracticeSuccessRate(monthClaims.length > 0 ? Math.round((successful / monthClaims.length) * 100) : 100);
+        }
+
+        const { data: manualReport } = await supabase
+          .from("billing_reports")
+          .select("total_billed_revenue")
+          .eq("practitioner_id", currentUserId)
+          .maybeSingle();
+
+        if (manualReport) {
+          setValueBilledTotal(Number(manualReport.total_billed_revenue) || 0);
+        } else {
+          setValueBilledTotal(0);
         }
 
         const { data: tk } = await supabase.from("tickets").select("*").eq("practitioner_id", currentUserId).order("updated_at", { ascending: false });
@@ -293,10 +318,40 @@ export default function DashboardPage() {
     }
   };
 
+  const handlePingOffice = async () => {
+    if (!selectedTicketId) return;
+    try {
+      const { data: authData } = await supabase.auth.getUser();
+      if (!authData?.user) return;
+
+      await supabase.from("ticket_messages").insert([
+        { 
+          ticket_id: selectedTicketId, 
+          sender_id: authData.user.id, 
+          sender_role: "practitioner", 
+          message: "⚠️ Practitioner requested an immediate case update status ping." 
+        }
+      ]);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleMarkTicketComplete = async () => {
+    if (!selectedTicketId) return;
+    try {
+      await supabase.from("tickets").update({ status: "closed" }).eq("id", selectedTicketId);
+      setSelectedTicketId(null);
+      setRealtimeTrigger(p => p + 1);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   const validateForm = (): string | null => {
-    if (!form.patientName.trim()) return "Patient name is required.";
-    if (!form.patientSurname.trim()) return "Patient surname is required.";
-    if (!form.procedureDescription.trim()) return "Procedure description is required.";
+    if (!form.icd10Code.trim()) return "ICD-10 Diagnostic Code choice is strictly required.";
+    if (!form.theatreStartTime.trim()) return "Theatre Operations Start Clock parameter is required.";
+    if (!form.theatreEndTime.trim()) return "Theatre Operations End Clock parameter is required.";
     return null;
   };
 
@@ -308,15 +363,30 @@ export default function DashboardPage() {
     setImagePreviewUrl(URL.createObjectURL(file));
   };
 
+  const handleExtraFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (extraImagePreviewUrl) URL.revokeObjectURL(extraImagePreviewUrl);
+    setExtraImageFile(file);
+    setExtraImagePreviewUrl(URL.createObjectURL(file));
+  };
+
   const clearImage = () => {
     if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
     setImagePreviewUrl(null);
     setImageFile(null);
   };
 
+  const clearExtraImage = () => {
+    if (extraImagePreviewUrl) URL.revokeObjectURL(extraImagePreviewUrl);
+    setExtraImagePreviewUrl(null);
+    setExtraImageFile(null);
+  };
+
   const resetForm = () => {
     setForm(emptyForm());
     clearImage();
+    clearExtraImage();
     setIcdSearch("");
     setError(null);
   };
@@ -340,12 +410,19 @@ export default function DashboardPage() {
         uploadedImageUrl = supabase.storage.from("claim-attachments").getPublicUrl(path).data.publicUrl;
       }
 
+      let uploadedExtraImageUrl = null;
+      if (extraImageFile) {
+        const path = `extra-${crypto.randomUUID()}.${extraImageFile.name.split(".").pop()}`;
+        const { error: upErr } = await supabase.storage.from("claim-attachments").upload(path, extraImageFile);
+        if (upErr) throw upErr;
+        uploadedExtraImageUrl = supabase.storage.from("claim-attachments").getPublicUrl(path).data.publicUrl;
+      }
+
       const { data: authData } = await supabase.auth.getUser();
       if (!authData?.user) throw new Error("Authentication state lost.");
       const currentUserId = authData.user.id;
 
-      // Injects weight, height, and BMI tokens accurately into notes string layout
-      const compositeNotes = `[Patient: ${form.patientName.trim()} ${form.patientSurname.trim()}] [Procedure Code: ${form.procedureCode.trim() || "None assigned"}] [Medical Aid: ${form.medicalAid}] [Weight: ${form.weight || "N/A"}kg] [Height: ${form.height || "N/A"}cm] [BMI: ${form.bmiInfo || "N/A"}] ${form.extraNotes.trim()}`.trim();
+      const compositeNotes = `[Patient: ${form.patientName.trim() || "N/A"} ${form.patientSurname.trim() || "N/A"}] [Procedure Code: ${form.procedureCode.trim() || "None assigned"}] [Billing Rate: ${form.billingRate}] [Weight: ${form.weight || "N/A"}kg] [Height: ${form.height || "N/A"}cm] [BMI: ${form.bmiInfo || "N/A"}] ${form.extraNotes.trim()}`.trim();
 
       const { data: record, error: claimErr } = await supabase.from("claims").insert([
         {
@@ -358,6 +435,7 @@ export default function DashboardPage() {
           modifiers: form.modifiers ? form.modifiers.split(",").map(m => m.trim()).filter(Boolean) : [],
           extra_notes: compositeNotes,
           image_url: uploadedImageUrl,
+          extra_image_url: uploadedExtraImageUrl,
           status: targetStatus
         }
       ]).select().single();
@@ -429,19 +507,32 @@ export default function DashboardPage() {
             {error && <div className="rounded-sm border border-red-500/40 bg-red-950/30 px-3 py-2 text-xs text-red-200">{error}</div>}
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              <div>
+              <div className="space-y-3">
                 {!imagePreviewUrl ? (
-                  <div onClick={() => fileInputRef.current?.click()} className="flex min-h-[460px] cursor-pointer flex-col items-center justify-center rounded-sm border-2 border-dashed border-slate-700 bg-slate-950/40 hover:border-teal-500/40 transition p-4">
-                    <p className="text-sm text-slate-400 font-medium">Capture Hospital Billing Sheet</p>
-                    <p className="text-xs text-slate-600 mt-1">PNG, JPEG, or device camera integration</p>
+                  <div onClick={() => fileInputRef.current?.click()} className="flex min-h-[224px] cursor-pointer flex-col items-center justify-center rounded-sm border-2 border-dashed border-slate-700 bg-slate-950/40 hover:border-teal-500/40 transition p-4 text-center">
+                    <p className="text-sm text-slate-400 font-medium">Capture Primary Hospital Billing Sheet</p>
+                    <p className="text-xs text-slate-600 mt-1">PNG, JPEG, or camera integration</p>
                   </div>
                 ) : (
                   <div className="relative border border-slate-800 rounded-sm bg-slate-950 p-2">
-                    <img src={imagePreviewUrl} className="max-h-[460px] w-full object-contain mx-auto" alt="Billing Sheet" />
+                    <img src={imagePreviewUrl} className="max-h-[224px] w-full object-contain mx-auto" alt="Primary Billing Sheet" />
                     <button onClick={clearImage} className="absolute top-4 right-4 bg-red-600 px-2 py-1 text-[10px] font-bold uppercase rounded-sm">Remove</button>
                   </div>
                 )}
                 <input ref={fileInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleFileChange} />
+
+                {!extraImagePreviewUrl ? (
+                  <div onClick={() => extraFileInputRef.current?.click()} className="flex min-h-[224px] cursor-pointer flex-col items-center justify-center rounded-sm border-2 border-dashed border-slate-800 bg-slate-950/20 hover:border-teal-500/30 transition p-4 text-center">
+                    <p className="text-sm text-slate-500 font-medium">+ Add Supporting Document / Image</p>
+                    <p className="text-xs text-slate-600 mt-1">Optional allocation sheet or secondary attachment</p>
+                  </div>
+                ) : (
+                  <div className="relative border border-slate-800 rounded-sm bg-slate-950 p-2">
+                    <img src={extraImagePreviewUrl} className="max-h-[224px] w-full object-contain mx-auto" alt="Extra Billing Sheet" />
+                    <button onClick={clearExtraImage} className="absolute top-4 right-4 bg-red-600 px-2 py-1 text-[10px] font-bold uppercase rounded-sm">Remove</button>
+                  </div>
+                )}
+                <input ref={extraFileInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleExtraFileChange} />
               </div>
 
               <form onSubmit={e => e.preventDefault()} className="space-y-3">
@@ -458,12 +549,11 @@ export default function DashboardPage() {
 
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className={labelClassName}>Medical Aid Fund</label>
-                    <select value={form.medicalAid} onChange={e => updateField("medicalAid", e.target.value)} className={`${inputClassName} bg-slate-950`}>
-                      <option value="Discovery Health">Discovery Health</option>
-                      <option value="GEMS">GEMS</option>
-                      <option value="Bonitas">Bonitas</option>
-                      <option value="Medscheme Private">Medscheme Private</option>
+                    <label className={labelClassName}>Billing Rate Plan Strategy</label>
+                    <select value={form.billingRate} onChange={e => updateField("billingRate", e.target.value)} className={`${inputClassName} bg-slate-950`}>
+                      <option value="Medical aid rates, No Copay">Medical aid rates, No Copay</option>
+                      <option value="Practice Profile">Practice Profile</option>
+                      <option value="International/Private">International/Private</option>
                     </select>
                   </div>
                   <div>
@@ -478,8 +568,8 @@ export default function DashboardPage() {
                 </div>
 
                 <div ref={icdSearchRef} className="relative">
-                  <label className={labelClassName}>ICD-10 Diagnostic Search</label>
-                  <input type="text" value={icdSearch} onFocus={() => setIcdDropdownOpen(true)} onChange={e => setIcdSearch(e.target.value)} className={inputClassName} placeholder="Search diagnostic classifications..." />
+                  <label className={`${labelClassName} text-teal-400 font-semibold`}>ICD-10 Diagnostic Search *</label>
+                  <input type="text" value={icdSearch} onFocus={() => setIcdDropdownOpen(true)} onChange={e => setIcdSearch(e.target.value)} className={`${inputClassName} border-teal-900/50`} placeholder="Search diagnostic classifications..." />
                   {icdDropdownOpen && filteredIcdCodes.length > 0 && (
                     <ul className="absolute z-20 mt-1 max-h-36 w-full overflow-y-auto bg-slate-950 border border-slate-800 rounded-sm divide-y divide-slate-900 shadow-2xl">
                       {filteredIcdCodes.map((i, idx) => {
@@ -502,12 +592,12 @@ export default function DashboardPage() {
                     <input type="date" value={form.theatreDate} onChange={e => updateField("theatreDate", e.target.value)} className={inputClassName} />
                   </div>
                   <div className="col-span-1">
-                    <label className={labelClassName}>Start Clock</label>
-                    <input type="time" value={form.theatreStartTime} onChange={e => updateField("theatreStartTime", e.target.value)} className={inputClassName} />
+                    <label className={`${labelClassName} text-teal-400 font-semibold`}>Start Clock *</label>
+                    <input type="time" value={form.theatreStartTime} onChange={e => updateField("theatreStartTime", e.target.value)} className={`${inputClassName} border-teal-900/50`} />
                   </div>
                   <div className="col-span-1">
-                    <label className={labelClassName}>End Clock</label>
-                    <input type="time" value={form.theatreEndTime} onChange={e => updateField("theatreEndTime", e.target.value)} className={inputClassName} />
+                    <label className={`${labelClassName} text-teal-400 font-semibold`}>End Clock *</label>
+                    <input type="time" value={form.theatreEndTime} onChange={e => updateField("theatreEndTime", e.target.value)} className={`${inputClassName} border-teal-900/50`} />
                   </div>
                 </div>
 
@@ -612,6 +702,21 @@ export default function DashboardPage() {
                 <div className="col-span-2 flex flex-col overflow-hidden bg-slate-950/40">
                   {selectedTicketId ? (
                     <>
+                      <div className="flex gap-2 p-2 bg-slate-950/80 border-b border-slate-800/60">
+                        <button 
+                          onClick={handlePingOffice}
+                          className="flex-1 rounded-sm bg-slate-900 border border-slate-700 px-2 py-1.5 text-[10px] font-bold uppercase tracking-wider text-amber-400 hover:bg-slate-800 transition"
+                        >
+                          ⚡ Ping Office
+                        </button>
+                        <button 
+                          onClick={handleMarkTicketComplete}
+                          className="flex-1 rounded-sm bg-teal-950/60 border border-teal-500/40 px-2 py-1.5 text-[10px] font-bold uppercase tracking-wider text-teal-400 hover:bg-teal-900/40 transition"
+                        >
+                          ✓ Mark Resolved
+                        </button>
+                      </div>
+
                       <div className="flex-1 p-3 overflow-y-auto space-y-2 text-xs flex flex-col">
                         {ticketMessages.map(m => {
                           const isMe = m.sender_role === "practitioner";
