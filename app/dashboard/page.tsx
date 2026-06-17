@@ -4,7 +4,7 @@ import { DragEvent, useCallback, useMemo, useRef, useState, useEffect } from "re
 import { createClient } from "@/utils/supabase";
 import icd10Database from "@/data/ICD10.json";
 
-type ClaimStatus = "captured" | "on_hold";
+type ClaimStatus = "captured" | "on_hold" | "billed";
 
 interface ClaimFormState {
   patientName: string;
@@ -34,7 +34,6 @@ interface ModifierOption {
   label: string;
 }
 
-// Safely generate local South African date stamp (YYYY-MM-DD)
 const getTodayDateString = () => {
   const today = new Date();
   const offset = today.getTimezoneOffset() * 60000;
@@ -142,12 +141,14 @@ export default function DashboardPage() {
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
+  // Trigger state incrementer used to cleanly force a data reload on live websocket changes
+  const [realtimeTrigger, setRealtimeTrigger] = useState(0);
+
   const isPremiumUser = true;
   const monthRange = useMemo(() => getMonthRangeLabel(new Date()), []);
 
   const supabase = createClient();
 
-  // Outside click listeners to safely handle the sticky dropdown state definitions
   useEffect(() => {
     function handleOutsideDropdownClicks(event: MouseEvent) {
       if (icdSearchRef.current && !icdSearchRef.current.contains(event.target as Node)) {
@@ -161,7 +162,41 @@ export default function DashboardPage() {
     return () => document.removeEventListener("mousedown", handleOutsideDropdownClicks);
   }, []);
 
-  // Practice Analytics Engine Pipeline
+  // ── REAL-TIME DATABASE SYNCHRONIZATION PIPELINE ──
+  useEffect(() => {
+    let channel: any;
+
+    async function initializeRealtimeSync() {
+      const { data: authData } = await supabase.auth.getUser();
+      if (!authData?.user) return;
+
+      // Subscribe explicitly to updates on the 'claims' table for this practitioner
+      channel = supabase
+        .channel(`realtime-dashboard-sync-${authData.user.id}`)
+        .on(
+          "postgres_changes",
+          {
+            event: "UPDATE",
+            schema: "public",
+            table: "claims",
+            filter: `practitioner_id=eq.${authData.user.id}`,
+          },
+          () => {
+            // Force state evaluation recalculation immediately upon bureau transaction saves
+            setRealtimeTrigger((prev) => prev + 1);
+          }
+        )
+        .subscribe();
+    }
+
+    initializeRealtimeSync();
+
+    return () => {
+      if (channel) supabase.removeChannel(channel);
+    };
+  }, []);
+
+  // Practice Analytics Engine Pipeline (Runs on user interaction or live backend updates)
   useEffect(() => {
     async function fetchLiveMetrics() {
       try {
@@ -181,9 +216,14 @@ export default function DashboardPage() {
         if (monthClaims) {
           const total = monthClaims.length;
           setTotalClaimsCount(total);
+          
+          // Calculate success and billing totals by including rows marked processed/billed by the office
           setValueBilledTotal(total * 1250);
           
-          const successfulCases = monthClaims.filter((c: { status: string }) => c.status === "captured" || c.status === "billed").length;
+          const successfulCases = monthClaims.filter(
+            (c: { status: string }) => c.status === "captured" || c.status === "billed"
+          ).length;
+          
           const rate = total > 0 ? Math.round((successfulCases / total) * 100) : 100;
           setPracticeSuccessRate(rate);
         }
@@ -202,7 +242,7 @@ export default function DashboardPage() {
       }
     }
     fetchLiveMetrics();
-  }, [submittedCount, holdCount]);
+  }, [submittedCount, holdCount, realtimeTrigger]);
 
   const ticketCounts = useMemo(() => {
     return {
@@ -348,7 +388,7 @@ export default function DashboardPage() {
     return null;
   };
 
-  const handlePersistClaim = async (targetStatus: ClaimStatus) => {
+  const handlePersistClaim = async (targetStatus: any) => {
     if (batchCompleted || isSaving) return;
 
     if (targetStatus === "captured") {
@@ -401,7 +441,6 @@ export default function DashboardPage() {
         ? form.modifiers.split(",").map((m) => m.trim()).filter((m) => m.length > 0)
         : [];
 
-      // Combine localized date with separate target times flawlessly for ISO db standard rules
       const isoStartTimestamp = form.theatreStartTime ? new Date(`${form.theatreDate}T${form.theatreStartTime}`).toISOString() : null;
       const isoEndTimestamp = form.theatreEndTime ? new Date(`${form.theatreDate}T${form.theatreEndTime}`).toISOString() : null;
 
@@ -587,7 +626,6 @@ export default function DashboardPage() {
                     <input id="procedure-description" type="text" value={form.procedureDescription} onChange={(e) => updateField("procedureDescription", e.target.value)} className={inputClassName} placeholder="Laparoscopic cholecystectomy" disabled={formDisabled} />
                   </div>
 
-                  {/* Procedure Code Field directly under Description */}
                   <div>
                     <label htmlFor="procedure-code" className={labelClassName}>Procedure Code</label>
                     <input id="procedure-code" type="text" value={form.procedureCode} onChange={(e) => updateField("procedureCode", e.target.value)} className={inputClassName} placeholder="e.g. 0012, 5431" disabled={formDisabled} />
@@ -611,7 +649,6 @@ export default function DashboardPage() {
                     )}
                   </div>
 
-                  {/* Theatre configurations packing Date above isolated clock inputs */}
                   <div className="space-y-3 border-t border-slate-800/50 pt-2">
                     <div>
                       <label htmlFor="theatre-date" className={labelClassName}>Theatre Date</label>
@@ -635,7 +672,6 @@ export default function DashboardPage() {
                     <input id="bmi-info" type="text" value={form.bmiInfo} onChange={(e) => updateField("bmiInfo", e.target.value)} className={inputClassName} placeholder="28.4" disabled={formDisabled} />
                   </div>
 
-                  {/* Fully persistent Modifiers selector menu */}
                   <div ref={modSearchRef} className="relative">
                     <label htmlFor="modifiers-search" className={labelClassName}>Modifiers Lookup</label>
                     <input id="modifiers-search" type="text" value={modSearch} onChange={(e) => { setModSearch(e.target.value); setModDropdownOpen(true); }} onFocus={() => setModDropdownOpen(true)} className={inputClassName} placeholder="Type keyword or code..." disabled={formDisabled} autoComplete="off" />
