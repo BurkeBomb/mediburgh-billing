@@ -8,7 +8,6 @@ export default function AuthenticationGatePage() {
   const [password, setPassword] = useState("");
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
   
-  // Registration Form States
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [practiceNumber, setPracticeNumber] = useState("");
@@ -21,31 +20,25 @@ export default function AuthenticationGatePage() {
   const supabase = createClient();
   const hasCheckedSession = useRef(false);
 
-  // Insulated mounting session validation check with clean error catching
   useEffect(() => {
-    async function checkExistingSession() {
-      if (hasCheckedSession.current) return;
-      hasCheckedSession.current = true;
+    if (hasCheckedSession.current) return;
+    hasCheckedSession.current = true;
 
+    async function checkExistingSession() {
       try {
         const { data: authData, error: authErr } = await supabase.auth.getUser();
-        
-        if (authErr) {
-          // Stale/invalid token configuration fallback
-          console.warn("Stale authentication session purged cleanly:", authErr.message);
-          await supabase.auth.signOut();
+
+        if (authErr || !authData?.user) {
           return;
         }
 
-        if (!authData?.user) return;
-
-        const { data: profile, error: profileErr } = await supabase
+        const { data: profile } = await supabase
           .from("profiles")
           .select("role")
           .eq("id", authData.user.id)
           .single();
 
-        if (profileErr || !profile) return;
+        if (!profile) return;
 
         if (profile.role === "practitioner") {
           window.location.replace("/dashboard");
@@ -53,9 +46,10 @@ export default function AuthenticationGatePage() {
           window.location.replace("/office");
         }
       } catch (err) {
-        console.error("Session mounting exception handled:", err);
+        console.error("Session check error:", err);
       }
     }
+
     checkExistingSession();
   }, []);
 
@@ -72,7 +66,6 @@ export default function AuthenticationGatePage() {
 
     try {
       if (authMode === "login") {
-        // ── VERIFY USER LOGIN ──
         const { data: loginData, error: loginErr } = await supabase.auth.signInWithPassword({
           email: email.trim(),
           password: password.trim(),
@@ -98,7 +91,6 @@ export default function AuthenticationGatePage() {
           window.location.replace("/office");
         }
       } else {
-        // ── EXECUTE REGISTRATION OVER AUTOMATED DATABASE TRIGGER ──
         if (!firstName.trim() || !lastName.trim()) {
           throw new Error("First name and surname fields are required.");
         }
@@ -119,7 +111,6 @@ export default function AuthenticationGatePage() {
         if (registerErr) throw registerErr;
         if (!registerData?.user) throw new Error("Could not initialize your user tracking security account.");
 
-        // If email confirmation links are active, guide the user cleanly
         if (registerData.session === null) {
           setMessage("Practice profile token initialized! Please check your email inbox to verify your connection and access the portal.");
           setFormClear();
