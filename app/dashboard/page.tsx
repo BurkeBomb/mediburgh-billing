@@ -16,6 +16,8 @@ interface ClaimFormState {
   theatreDate: string;
   theatreStartTime: string;
   theatreEndTime: string;
+  weight: string;
+  height: string;
   bmiInfo: string;
   modifiers: string;
   extraNotes: string;
@@ -35,7 +37,7 @@ interface TicketThread {
 interface TicketMessage {
   id: string;
   ticket_id: string;
-  message: text;
+  message: string;
   sender_role: "billing_team" | "practitioner";
   created_at: string;
 }
@@ -56,13 +58,28 @@ const emptyForm = (): ClaimFormState => ({
   theatreDate: getTodayDateString(),
   theatreStartTime: "",
   theatreEndTime: "",
-  weight: "", height: "",
+  weight: "",
+  height: "",
   bmiInfo: "",
   modifiers: "",
   extraNotes: "",
 });
 
+const calculateBMI = (weightKg: string, heightCm: string): string => {
+  const w = parseFloat(weightKg);
+  const h = parseFloat(heightCm) / 100;
+  if (!w || !h || h === 0) return "";
+  return (w / (h * h)).toFixed(1);
+};
+
+const getMonthRangeLabel = (date: Date) => {
+  return date.toLocaleString("en-ZA", { month: "long", year: "numeric" });
+};
+
 const ALL_ICD10_CODES = icd10Database.Employees.Employee;
+
+const labelClassName = "block text-[10px] font-medium uppercase tracking-wider text-slate-400 mb-1";
+const inputClassName = "w-full rounded-sm border border-slate-700/80 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 outline-none focus:border-teal-500/70";
 
 export default function DashboardPage() {
   const formRef = useRef<HTMLFormElement>(null);
@@ -87,8 +104,7 @@ export default function DashboardPage() {
   const [totalClaimsCount, setTotalClaimsCount] = useState<number | null>(null);
   const [valueBilledTotal, setValueBilledTotal] = useState<number | null>(null);
   const [practiceSuccessRate, setPracticeSuccessRate] = useState<number | null>(null);
-  
-  // Real-time chat system states
+
   const [liveTickets, setLiveTickets] = useState<TicketThread[]>([]);
   const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
   const [ticketMessages, setTicketMessages] = useState<TicketMessage[]>([]);
@@ -102,12 +118,17 @@ export default function DashboardPage() {
   const supabase = createClient();
   const monthRange = useMemo(() => getMonthRangeLabel(new Date()), []);
 
-  // ── SOUTH AFRICAN MEDICAL AID COMPLIANCE ENGINE (RULEBOOK AUTOMATION) ──
+  // Auto-calculate BMI when weight or height changes
+  useEffect(() => {
+    const bmi = calculateBMI(form.weight, form.height);
+    setForm(p => ({ ...p, bmiInfo: bmi }));
+  }, [form.weight, form.height]);
+
   const medicalAidWarnings = useMemo(() => {
     const warnings: string[] = [];
     const codes = form.procedureCode.split(",").map(c => c.trim());
     const mods = form.modifiers.split(",").map(m => m.trim());
-    
+
     if (form.medicalAid === "GEMS" && mods.includes("0147 + 0011") && !form.extraNotes.toLowerCase().includes("emergency")) {
       warnings.push("GEMS Rulebook Alert: Emergency modifiers require explicit supporting context inside the Extra Notes field.");
     }
@@ -129,7 +150,6 @@ export default function DashboardPage() {
     return () => document.removeEventListener("mousedown", handleOutsideDropdownClicks);
   }, []);
 
-  // Real-time update subscriptions
   useEffect(() => {
     let claimsChannel: any;
     let ticketsChannel: any;
@@ -155,7 +175,6 @@ export default function DashboardPage() {
     };
   }, []);
 
-  // Fetch metrics and tickets
   useEffect(() => {
     async function fetchLiveMetrics() {
       try {
@@ -180,7 +199,6 @@ export default function DashboardPage() {
     fetchLiveMetrics();
   }, [submittedCount, holdCount, realtimeTrigger]);
 
-  // Fetch thread messages on selection
   useEffect(() => {
     if (!selectedTicketId) return;
     async function fetchMessages() {
@@ -214,6 +232,20 @@ export default function DashboardPage() {
     } catch (err) {
       console.error(err);
     }
+  };
+
+  const validateForm = (): string | null => {
+    if (!form.patientName.trim()) return "Patient name is required.";
+    if (!form.patientSurname.trim()) return "Patient surname is required.";
+    if (!form.procedureDescription.trim()) return "Procedure description is required.";
+    return null;
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImageFile(file);
+    setImagePreviewUrl(URL.createObjectURL(file));
   };
 
   const handlePersistClaim = async (targetStatus: any) => {
@@ -258,7 +290,7 @@ export default function DashboardPage() {
       if (claimErr) throw claimErr;
 
       await supabase.from("audit_logs").insert([{ claim_id: record.id, user_id: currentUserId, action: "Claim authorized via desktop terminal input grid layer." }]);
-      
+
       if (targetStatus === "captured") setSubmittedCount(c => c + 1);
       else setHoldCount(c => c + 1);
       resetForm();
@@ -267,6 +299,15 @@ export default function DashboardPage() {
     } finally {
       setIsSaving(false);
     }
+  };
+
+  const resetForm = () => {
+    setForm(emptyForm());
+    setImageFile(null);
+    setImagePreviewUrl(null);
+    setIcdSearch("");
+    setError(null);
+    setStatusMessage(null);
   };
 
   const updateField = useCallback((field: keyof ClaimFormState, value: string) => setForm(p => ({ ...p, [field]: value })), []);
@@ -278,10 +319,21 @@ export default function DashboardPage() {
     updateField("modifiers", upd.join(", "));
   };
 
+  const bmiCategory = (bmi: string): { label: string; color: string } => {
+    const val = parseFloat(bmi);
+    if (!val) return { label: "", color: "text-slate-500" };
+    if (val < 18.5) return { label: "Underweight", color: "text-blue-400" };
+    if (val < 25) return { label: "Normal", color: "text-teal-400" };
+    if (val < 30) return { label: "Overweight", color: "text-amber-400" };
+    return { label: "Obese", color: "text-red-400" };
+  };
+
+  const bmiMeta = bmiCategory(form.bmiInfo);
+
   return (
     <div className="relative min-h-screen bg-[#0b0f14] text-slate-100 flex flex-col">
       <div aria-hidden className="pointer-events-none fixed inset-0 bg-[radial-gradient(ellipse_90%_55%_at_50%_-15%,rgba(20,184,166,0.12),transparent)]" />
-      
+
       <div className="relative mx-auto w-full max-w-[1680px] px-4 py-6 flex-1 flex flex-col gap-6">
         <header className="flex justify-between items-center border-b border-slate-800 pb-4">
           <div>
@@ -298,8 +350,7 @@ export default function DashboardPage() {
         <div className="grid grid-cols-1 xl:grid-cols-5 gap-6 flex-1">
           {/* Main Form Entry */}
           <section className="xl:col-span-3 rounded-sm border border-slate-800 bg-slate-900/40 p-5 space-y-4">
-            
-            {/* Real-time Rulebook Alerts Bar */}
+
             {medicalAidWarnings.length > 0 && (
               <div className="rounded-sm border border-amber-500/30 bg-amber-950/20 p-3 space-y-1">
                 {medicalAidWarnings.map((w, idx) => (
@@ -307,6 +358,8 @@ export default function DashboardPage() {
                 ))}
               </div>
             )}
+
+            {error && <div className="rounded-sm border border-red-500/40 bg-red-950/30 px-3 py-2 text-xs text-red-200">{error}</div>}
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               {/* Image Input Box */}
@@ -325,7 +378,7 @@ export default function DashboardPage() {
                 <input ref={fileInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleFileChange} />
               </div>
 
-              {/* Data Fields Input Sheet */}
+              {/* Data Fields */}
               <form onSubmit={e => e.preventDefault()} className="space-y-3">
                 <div className="grid grid-cols-2 gap-3">
                   <div>
@@ -365,7 +418,10 @@ export default function DashboardPage() {
                   {icdDropdownOpen && (
                     <ul className="absolute z-20 mt-1 max-h-36 w-full overflow-y-auto bg-slate-950 border border-slate-800 rounded-sm divide-y divide-slate-900 shadow-2xl">
                       {ALL_ICD10_CODES.slice(0, 10).map((i: any) => (
-                        <li key={i.ICD10CODE} onClick={() => selectIcdCode({ code: i.ICD10CODE, description: i["DESCRIPTION\r"] })} className="px-3 py-2 text-xs hover:bg-slate-900 cursor-pointer flex justify-between"><span className="text-teal-400 font-mono font-bold">{i.ICD10CODE}</span> <span className="text-slate-400 truncate max-w-xs">{i["DESCRIPTION\r"]}</span></li>
+                        <li key={i.ICD10CODE} onClick={() => selectIcdCode({ code: i.ICD10CODE, description: i["DESCRIPTION\r"] })} className="px-3 py-2 text-xs hover:bg-slate-900 cursor-pointer flex justify-between">
+                          <span className="text-teal-400 font-mono font-bold">{i.ICD10CODE}</span>
+                          <span className="text-slate-400 truncate max-w-xs">{i["DESCRIPTION\r"]}</span>
+                        </li>
                       ))}
                     </ul>
                   )}
@@ -384,9 +440,46 @@ export default function DashboardPage() {
                     <label className={labelClassName}>End Clock</label>
                     <input type="time" value={form.theatreEndTime} onChange={e => updateField("theatreEndTime", e.target.value)} className={inputClassName} />
                   </div>
-                  <div className="col-span-1">
-                    <label className={labelClassName}>Patient BMI</label>
-                    <input type="text" value={form.bmiInfo} onChange={e => updateField("bmiInfo", e.target.value)} className={inputClassName} placeholder="24.5" />
+                </div>
+
+                {/* Weight / Height / BMI Block */}
+                <div className="grid grid-cols-3 gap-2 border-t border-slate-800/80 pt-2">
+                  <div>
+                    <label className={labelClassName}>Weight (kg)</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.1"
+                      value={form.weight}
+                      onChange={e => updateField("weight", e.target.value)}
+                      className={inputClassName}
+                      placeholder="75"
+                    />
+                  </div>
+                  <div>
+                    <label className={labelClassName}>Height (cm)</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.1"
+                      value={form.height}
+                      onChange={e => updateField("height", e.target.value)}
+                      className={inputClassName}
+                      placeholder="175"
+                    />
+                  </div>
+                  <div>
+                    <label className={labelClassName}>BMI</label>
+                    <div className={`${inputClassName} flex flex-col justify-center min-h-[38px]`}>
+                      {form.bmiInfo ? (
+                        <>
+                          <span className={`font-mono font-bold text-sm ${bmiMeta.color}`}>{form.bmiInfo}</span>
+                          <span className={`text-[9px] uppercase tracking-wider ${bmiMeta.color}`}>{bmiMeta.label}</span>
+                        </>
+                      ) : (
+                        <span className="text-slate-600 text-xs">Auto</span>
+                      )}
+                    </div>
                   </div>
                 </div>
 
@@ -410,12 +503,16 @@ export default function DashboardPage() {
             </div>
 
             <div className="grid grid-cols-2 gap-3 border-t border-slate-800 pt-3">
-              <button onClick={() => handlePersistClaim("captured")} className="bg-teal-600 font-semibold py-2.5 text-xs font-sans uppercase tracking-wider rounded-sm hover:bg-teal-500">Transmit Claim Matrix</button>
-              <button onClick={() => handlePersistClaim("on_hold")} className="bg-amber-600 font-semibold py-2.5 text-xs font-sans uppercase tracking-wider text-amber-950 rounded-sm hover:bg-amber-500">Hold Case Token</button>
+              <button onClick={() => handlePersistClaim("captured")} disabled={isSaving} className="bg-teal-600 font-semibold py-2.5 text-xs font-sans uppercase tracking-wider rounded-sm hover:bg-teal-500 disabled:opacity-40">
+                {isSaving ? "Transmitting..." : "Transmit Claim Matrix"}
+              </button>
+              <button onClick={() => handlePersistClaim("on_hold")} disabled={isSaving} className="bg-amber-600 font-semibold py-2.5 text-xs font-sans uppercase tracking-wider text-amber-950 rounded-sm hover:bg-amber-500 disabled:opacity-40">
+                Hold Case Token
+              </button>
             </div>
           </section>
 
-          {/* Interactive Bureau Chat & Analytics Pack */}
+          {/* Analytics + Chat */}
           <aside className="xl:col-span-2 flex flex-col gap-4">
             <div className="rounded-sm border border-slate-800 bg-slate-900/40 p-4">
               <h3 className="text-xs font-bold uppercase tracking-wider text-slate-300">Live Practice Financial Pack</h3>
@@ -435,7 +532,6 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            {/* Interactive Chat Pipeline Interface */}
             <div className="rounded-sm border border-slate-800 bg-slate-900/40 flex-1 flex flex-col overflow-hidden max-h-[460px]">
               <div className="border-b border-slate-800 px-4 py-3 bg-slate-950/40 flex justify-between items-center">
                 <div>
@@ -445,8 +541,7 @@ export default function DashboardPage() {
               </div>
 
               <div className="flex-1 grid grid-cols-3 overflow-hidden">
-                {/* Tickets Thread List */}
-                <ul className="col-span-1 border-r border-slate-800 divide-y divide-slate-900 max-y-full overflow-y-auto bg-slate-950/20">
+                <ul className="col-span-1 border-r border-slate-800 divide-y divide-slate-900 overflow-y-auto bg-slate-950/20">
                   {liveTickets.map(t => (
                     <li key={t.id} onClick={() => setSelectedTicketId(t.id)} className={`p-2.5 cursor-pointer text-[11px] flex flex-col gap-1 hover:bg-slate-900/40 ${selectedTicketId === t.id ? "bg-slate-950 border-l-2 border-teal-500" : ""}`}>
                       <span className={`font-semibold truncate ${t.status === "urgent" ? "text-red-400" : "text-slate-200"}`}>{t.subject}</span>
@@ -455,7 +550,6 @@ export default function DashboardPage() {
                   ))}
                 </ul>
 
-                {/* Live Converational Window Component */}
                 <div className="col-span-2 flex flex-col overflow-hidden bg-slate-950/40">
                   {selectedTicketId ? (
                     <>
