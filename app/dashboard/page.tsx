@@ -43,8 +43,8 @@ interface TicketMessage {
 }
 
 interface IcdCodeItem {
-  ICD10CODE: string;
-  "DESCRIPTION\r": string;
+  ICD10CODE?: string;
+  "DESCRIPTION\r"?: string;
 }
 
 const getTodayDateString = () => {
@@ -77,7 +77,7 @@ const calculateBMI = (weightKg: string, heightCm: string): string => {
   return (w / (h * h)).toFixed(1);
 };
 
-const ALL_ICD10_CODES = icd10Database.Employees.Employee as IcdCodeItem[];
+const ALL_ICD10_CODES = (icd10Database?.Employees?.Employee || []) as IcdCodeItem[];
 
 const labelClassName = "block text-[10px] font-medium uppercase tracking-wider text-slate-400 mb-1";
 const inputClassName = "w-full rounded-sm border border-slate-700/80 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 outline-none focus:border-teal-500/70";
@@ -117,13 +117,14 @@ export default function DashboardPage() {
     setForm(p => ({ ...p, bmiInfo: bmi }));
   }, [form.weight, form.height]);
 
+  // Defensively match query parameters to bypass null string runtime crashes
   const filteredIcdCodes = useMemo(() => {
     if (!icdSearch.trim()) return ALL_ICD10_CODES.slice(0, 10);
     const query = icdSearch.toLowerCase();
     return ALL_ICD10_CODES.filter(
       item =>
-        item.ICD10CODE.toLowerCase().includes(query) ||
-        item["DESCRIPTION\r"].toLowerCase().includes(query)
+        item?.ICD10CODE?.toLowerCase().includes(query) ||
+        item?.["DESCRIPTION\r"]?.toLowerCase().includes(query)
     ).slice(0, 10);
   }, [icdSearch]);
 
@@ -210,8 +211,13 @@ export default function DashboardPage() {
 
       msgChannel = supabase
         .channel(`msg-sync-${selectedTicketId}`)
-        .on("postgres_changes", { event: "INSERT", schema: "public", table: "ticket_messages", filter: `ticket_id=eq.${selectedTicketId}` }, (payload: { new: TicketMessage }) => {
-          setTicketMessages(prev => [...prev, payload.new as TicketMessage]);
+        .on("postgres_changes", { 
+          event: "INSERT", 
+          schema: "public", 
+          table: "ticket_messages", 
+          filter: `ticket_id=eq.${selectedTicketId}` 
+        }, (payload: { new: TicketMessage }) => {
+          setTicketMessages(prev => [...prev, payload.new]);
         })
         .subscribe();
     }
@@ -290,7 +296,7 @@ export default function DashboardPage() {
       if (!authData?.user) throw new Error("Authentication state lost.");
       const currentUserId = authData.user.id;
 
-      // Appending metadata tags to notes layout accurately
+      // Injects weight, height, and BMI tokens accurately into notes string layout
       const compositeNotes = `[Patient: ${form.patientName.trim()} ${form.patientSurname.trim()}] [Procedure Code: ${form.procedureCode.trim() || "None assigned"}] [Medical Aid: ${form.medicalAid}] [Weight: ${form.weight || "N/A"}kg] [Height: ${form.height || "N/A"}cm] [BMI: ${form.bmiInfo || "N/A"}] ${form.extraNotes.trim()}`.trim();
 
       const { data: record, error: claimErr } = await supabase.from("claims").insert([
@@ -428,12 +434,16 @@ export default function DashboardPage() {
                   <input type="text" value={icdSearch} onFocus={() => setIcdDropdownOpen(true)} onChange={e => setIcdSearch(e.target.value)} className={inputClassName} placeholder="Search diagnostic classifications..." />
                   {icdDropdownOpen && filteredIcdCodes.length > 0 && (
                     <ul className="absolute z-20 mt-1 max-h-36 w-full overflow-y-auto bg-slate-950 border border-slate-800 rounded-sm divide-y divide-slate-900 shadow-2xl">
-                      {filteredIcdCodes.map((i) => (
-                        <li key={i.ICD10CODE} onClick={() => selectIcdCode({ code: i.ICD10CODE, description: i["DESCRIPTION\r"] })} className="px-3 py-2 text-xs hover:bg-slate-900 cursor-pointer flex justify-between gap-2">
-                          <span className="text-teal-400 font-mono font-bold whitespace-nowrap">{i.ICD10CODE}</span>
-                          <span className="text-slate-400 truncate max-w-xs">{i["DESCRIPTION\r"]}</span>
-                        </li>
-                      ))}
+                      {filteredIcdCodes.map((i, idx) => {
+                        const code = i?.ICD10CODE || "";
+                        const desc = i?.["DESCRIPTION\r"] || "";
+                        return (
+                          <li key={code || idx} onClick={() => selectIcdCode({ code, description: desc })} className="px-3 py-2 text-xs hover:bg-slate-900 cursor-pointer flex justify-between gap-2">
+                            <span className="text-teal-400 font-mono font-bold whitespace-nowrap">{code || "N/A"}</span>
+                            <span className="text-slate-400 truncate max-w-xs">{desc}</span>
+                          </li>
+                        );
+                      })}
                     </ul>
                   )}
                 </div>
