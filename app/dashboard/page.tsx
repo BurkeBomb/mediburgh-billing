@@ -4,17 +4,15 @@ import { DragEvent, useCallback, useMemo, useRef, useState, useEffect } from "re
 import { createClient } from "@/utils/supabase";
 import icd10Database from "@/data/ICD10.json";
 
-function getErrorMessage(err: unknown, fallback: string) {
-  return err instanceof Error ? err.message : fallback;
-}
-
 type ClaimStatus = "captured" | "on_hold";
 
 interface ClaimFormState {
   patientName: string;
   patientSurname: string;
   procedureDescription: string;
+  procedureCode: string;
   icd10Code: string;
+  theatreDate: string;
   theatreStartTime: string;
   theatreEndTime: string;
   bmiInfo: string;
@@ -36,17 +34,26 @@ interface ModifierOption {
   label: string;
 }
 
-const emptyForm: ClaimFormState = {
+// Safely generate local South African date stamp (YYYY-MM-DD)
+const getTodayDateString = () => {
+  const today = new Date();
+  const offset = today.getTimezoneOffset() * 60000;
+  return new Date(today.getTime() - offset).toISOString().split("T")[0];
+};
+
+const emptyForm = (): ClaimFormState => ({
   patientName: "",
   patientSurname: "",
   procedureDescription: "",
+  procedureCode: "",
   icd10Code: "",
+  theatreDate: getTodayDateString(),
   theatreStartTime: "",
   theatreEndTime: "",
   bmiInfo: "",
   modifiers: "",
   extraNotes: "",
-};
+});
 
 const ALL_ICD10_CODES = icd10Database.Employees.Employee;
 
@@ -87,23 +94,14 @@ const PRELOADED_MODIFIERS: ModifierOption[] = [
   { code: "5103 + 0083", label: "Ultrasound" },
 ];
 
-const cardClassName =
-  "rounded-sm border border-slate-800/90 bg-slate-900/40 shadow-[0_16px_48px_rgba(0,0,0,0.35)] backdrop-blur-sm";
-
-const inputClassName =
-  "w-full rounded-sm border border-slate-700/80 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 outline-none transition focus:border-teal-500/70 focus:ring-1 focus:ring-teal-500/40";
-
-const labelClassName =
-  "mb-1 block text-[10px] font-medium uppercase tracking-wider text-slate-400";
+const cardClassName = "rounded-sm border border-slate-800/90 bg-slate-900/40 shadow-[0_16px_48px_rgba(0,0,0,0.35)] backdrop-blur-sm";
+const inputClassName = "w-full rounded-sm border border-slate-700/80 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 outline-none transition focus:border-teal-500/70 focus:ring-1 focus:ring-teal-500/40";
+const labelClassName = "mb-1 block text-[10px] font-medium uppercase tracking-wider text-slate-400";
 
 function getMonthRangeLabel(date: Date) {
   const start = new Date(date.getFullYear(), date.getMonth(), 1);
   const end = new Date(date.getFullYear(), date.getMonth() + 1, 0);
-  const fmt = new Intl.DateTimeFormat("en-ZA", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
+  const fmt = new Intl.DateTimeFormat("en-ZA", { day: "numeric", month: "short", year: "numeric" });
   return `${fmt.format(start)} – ${fmt.format(end)}`;
 }
 
@@ -121,7 +119,7 @@ export default function DashboardPage() {
   const icdSearchRef = useRef<HTMLDivElement>(null);
   const modSearchRef = useRef<HTMLDivElement>(null);
 
-  const [form, setForm] = useState<ClaimFormState>(emptyForm);
+  const [form, setForm] = useState<ClaimFormState>(emptyForm());
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -149,7 +147,21 @@ export default function DashboardPage() {
 
   const supabase = createClient();
 
-  // ── LIVE METRICS AND DATA STREAMING PIPELINE ──
+  // Outside click listeners to safely handle the sticky dropdown state definitions
+  useEffect(() => {
+    function handleOutsideDropdownClicks(event: MouseEvent) {
+      if (icdSearchRef.current && !icdSearchRef.current.contains(event.target as Node)) {
+        setIcdDropdownOpen(false);
+      }
+      if (modSearchRef.current && !modSearchRef.current.contains(event.target as Node)) {
+        setModDropdownOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleOutsideDropdownClicks);
+    return () => document.removeEventListener("mousedown", handleOutsideDropdownClicks);
+  }, []);
+
+  // Practice Analytics Engine Pipeline
   useEffect(() => {
     async function fetchLiveMetrics() {
       try {
@@ -186,11 +198,11 @@ export default function DashboardPage() {
           setLiveTickets(ticketData as TicketThread[]);
         }
       } catch (err) {
-        console.error("Failed to stream live practice metrics layout:", err);
+        console.error("Failed to stream metrics matrix layout:", err);
       }
     }
     fetchLiveMetrics();
-  }, [submittedCount, holdCount, supabase]);
+  }, [submittedCount, holdCount]);
 
   const ticketCounts = useMemo(() => {
     return {
@@ -200,7 +212,6 @@ export default function DashboardPage() {
     };
   }, [liveTickets]);
 
-  // ── STRING NORMALIZATION SCAN FILTER ENGINES ──
   const filteredIcdOptions = useMemo(() => {
     const q = icdSearch.trim().toLowerCase();
     const cleanDesc = (descStr: string) => {
@@ -230,11 +241,11 @@ export default function DashboardPage() {
 
   const filteredModifierOptions = useMemo(() => {
     const q = modSearch.trim().toLowerCase();
-    if (!q) return PRELOADED_MODIFIERS.slice(0, 8);
+    if (!q) return PRELOADED_MODIFIERS;
 
     return PRELOADED_MODIFIERS.filter(
       (opt) => opt.code.toLowerCase().includes(q) || opt.label.toLowerCase().includes(q)
-    ).slice(0, 12);
+    );
   }, [modSearch]);
 
   const activeModifiersList = useMemo(() => {
@@ -243,12 +254,9 @@ export default function DashboardPage() {
       : [];
   }, [form.modifiers]);
 
-  const updateField = useCallback(
-    (field: keyof ClaimFormState, value: string) => {
-      setForm((prev) => ({ ...prev, [field]: value }));
-    },
-    [],
-  );
+  const updateField = useCallback((field: keyof ClaimFormState, value: string) => {
+    setForm((prev) => ({ ...prev, [field]: value }));
+  }, []);
 
   const toggleModifierCode = (code: string) => {
     const current = form.modifiers
@@ -309,7 +317,7 @@ export default function DashboardPage() {
   };
 
   const resetForm = useCallback(() => {
-    setForm(emptyForm);
+    setForm(emptyForm());
     setIcdSearch("");
     setModSearch("");
     setIcdDropdownOpen(false);
@@ -317,7 +325,6 @@ export default function DashboardPage() {
     clearImage();
     setError(null);
     formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    formRef.current?.querySelector<HTMLElement>("input, textarea, select")?.focus();
   }, [clearImage]);
 
   const selectIcdCode = (option: { code: string; description: string }) => {
@@ -332,10 +339,11 @@ export default function DashboardPage() {
     if (!form.patientSurname.trim()) return "Patient Surname is required.";
     if (!form.procedureDescription.trim()) return "Procedure Description is required.";
     if (!form.icd10Code.trim()) return "ICD-10 Code is required.";
+    if (!form.theatreDate) return "Theatre Date is required.";
     if (!form.theatreStartTime) return "Theatre Start Time is required.";
     if (!form.theatreEndTime) return "Theatre End Time is required.";
     if (form.theatreEndTime <= form.theatreStartTime) {
-      return "Theatre End Time must be after Theatre Start Time.";
+      return "Theatre End Time must be positioned after your Theatre Start Time.";
     }
     return null;
   };
@@ -365,23 +373,14 @@ export default function DashboardPage() {
     try {
       let uploadedImageUrl = null;
 
-      const { data: authData, error: authError } = await supabase.auth.getUser();
-      if (authError || !authData.user) {
-        throw new Error("Session verification failed. Please re-authenticate via the portal gateway.");
-      }
-      const currentUserId = authData.user.id;
-
       if (imageFile) {
         const fileExt = imageFile.name.split(".").pop();
         const secureFileName = `${crypto.randomUUID()}.${fileExt}`;
-        const targetPath = `${currentUserId}/${secureFileName}`;
+        const targetPath = `${secureFileName}`;
 
         const { error: uploadError } = await supabase.storage
           .from("claim-attachments")
-          .upload(targetPath, imageFile, {
-            cacheControl: "3600",
-            upsert: false,
-          });
+          .upload(targetPath, imageFile, { cacheControl: "3600", upsert: false });
 
         if (uploadError) throw uploadError;
 
@@ -392,11 +391,25 @@ export default function DashboardPage() {
         uploadedImageUrl = publicUrlData.publicUrl;
       }
 
+      const { data: authData, error: authError } = await supabase.auth.getUser();
+      if (authError || !authData.user) {
+        throw new Error("Session verification failed. Please re-authenticate via the portal gateway.");
+      }
+      const currentUserId = authData.user.id;
+
       const cleanedModifiers = form.modifiers
         ? form.modifiers.split(",").map((m) => m.trim()).filter((m) => m.length > 0)
         : [];
 
-      const compoundNotes = `[Patient: ${form.patientName} ${form.patientSurname}] ${form.extraNotes}`.trim();
+      // Combine localized date with separate target times flawlessly for ISO db standard rules
+      const isoStartTimestamp = form.theatreStartTime ? new Date(`${form.theatreDate}T${form.theatreStartTime}`).toISOString() : null;
+      const isoEndTimestamp = form.theatreEndTime ? new Date(`${form.theatreDate}T${form.theatreEndTime}`).toISOString() : null;
+
+      const compositeNotes = [
+        `[Patient: ${form.patientName} ${form.patientSurname}]`,
+        form.procedureCode ? `[Procedure Code: ${form.procedureCode}]` : null,
+        form.extraNotes
+      ].filter(Boolean).join(" ").trim();
 
       const { data: newClaimRecord, error: claimError } = await supabase
         .from("claims")
@@ -405,11 +418,11 @@ export default function DashboardPage() {
             practitioner_id: currentUserId,
             procedure_description: form.procedureDescription || "Incomplete — Positioned on Hold",
             icd10_code: form.icd10Code || null,
-            theatre_start_time: form.theatreStartTime ? new Date(form.theatreStartTime).toISOString() : null,
-            theatre_end_time: form.theatreEndTime ? new Date(form.theatreEndTime).toISOString() : null,
+            theatre_start_time: isoStartTimestamp,
+            theatre_end_time: isoEndTimestamp,
             bmi_info: form.bmiInfo ? parseFloat(form.bmiInfo) || null : null,
             modifiers: cleanedModifiers,
-            extra_notes: compoundNotes,
+            extra_notes: compositeNotes,
             image_url: uploadedImageUrl,
             status: targetStatus,
           },
@@ -425,13 +438,7 @@ export default function DashboardPage() {
 
       await supabase
         .from("audit_logs")
-        .insert([
-          {
-            claim_id: newClaimRecord.id,
-            user_id: currentUserId,
-            action: logActionString,
-          },
-        ]);
+        .insert([{ claim_id: newClaimRecord.id, user_id: currentUserId, action: logActionString }]);
 
       if (targetStatus === "captured") {
         setSubmittedCount((c) => c + 1);
@@ -442,9 +449,9 @@ export default function DashboardPage() {
       }
 
       resetForm();
-    } catch (err: unknown) {
-      console.error("Critical submission break logged:", err);
-      setError(getErrorMessage(err, "An issue disrupted the server communication lane. Data preserved locally."));
+    } catch (err: any) {
+      console.error("Critical submission error logged:", err);
+      setError(err.message || "An issue disrupted the server communication lane. Data preserved locally.");
       setStatusMessage(null);
     } finally {
       setIsSaving(false);
@@ -453,9 +460,7 @@ export default function DashboardPage() {
 
   const handleCompleted = () => {
     setBatchCompleted(true);
-    setStatusMessage(
-      `Batch processing marked complete. ${submittedCount} claims secured, ${holdCount} trace queues flagged.`,
-    );
+    setStatusMessage(`Batch processing marked complete. ${submittedCount} claims secured, ${holdCount} trace queues flagged.`);
     setError(null);
   };
 
@@ -497,20 +502,12 @@ export default function DashboardPage() {
               <span className="font-mono text-xl font-semibold tabular-nums text-amber-300">{holdCount}</span>
             </div>
             
-            <button
-              type="button"
-              onClick={handleSignOut}
-              className="rounded-sm border border-slate-700 bg-slate-800/60 px-4 py-2 text-xs font-medium uppercase tracking-wide text-slate-300 transition hover:bg-slate-800"
-            >
+            <button type="button" onClick={handleSignOut} className="rounded-sm border border-slate-700 bg-slate-800/60 px-4 py-2 text-xs font-medium uppercase tracking-wide text-slate-300 transition hover:bg-slate-800">
               Sign Out
             </button>
 
             {batchCompleted && (
-              <button
-                type="button"
-                onClick={handleStartNewBatch}
-                className="rounded-sm border border-slate-600 bg-slate-800/60 px-4 py-2 text-xs font-medium uppercase tracking-wide text-slate-200 transition hover:border-slate-500 hover:bg-slate-800"
-              >
+              <button type="button" onClick={handleStartNewBatch} className="rounded-sm border border-slate-600 bg-slate-800/60 px-4 py-2 text-xs font-medium uppercase tracking-wide text-slate-200 transition hover:border-slate-500 hover:bg-slate-800">
                 Start new batch
               </button>
             )}
@@ -545,7 +542,7 @@ export default function DashboardPage() {
                     } ${formDisabled ? "pointer-events-none opacity-50" : ""}`}
                   >
                     <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-sm border border-slate-700 bg-slate-900">
-                      <svg className="h-6 w-6 text-teal-500/80" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} aria-hidden>
+                      <svg className="h-6 w-6 text-teal-500/80" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M6.827 6.175A2.31 2.31 0 015.186 7.23c-.38.054-.757.112-1.134.175C2.999 7.58 2.25 8.507 2.25 9.574V18a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9.574c0-1.067-.75-1.994-1.802-2.169a41.763 41.763 0 00-1.134-.175 2.31 2.31 0 01-1.64-1.055l-.822-1.316a2.192 2.192 0 00-1.736-1.039 48.774 48.774 0 00-5.232 0 2.192 2.192 0 00-1.736 1.039l-.821 1.316z" />
                         <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 12.75a4.5 4.5 0 11-9 0 4.5 4.5 0 019 0z" />
                       </svg>
@@ -564,7 +561,6 @@ export default function DashboardPage() {
                       )}
                     </div>
                     <div className="flex-1 overflow-hidden rounded-sm border border-slate-800 bg-slate-950/70">
-                      {/* eslint-disable-next-line @next/next/no-img-element -- Local object URLs are not handled well by next/image. */}
                       <img src={imagePreviewUrl} alt="Hospital sheet preview" className="h-full max-h-[520px] w-full object-contain" />
                     </div>
                   </div>
@@ -591,15 +587,21 @@ export default function DashboardPage() {
                     <input id="procedure-description" type="text" value={form.procedureDescription} onChange={(e) => updateField("procedureDescription", e.target.value)} className={inputClassName} placeholder="Laparoscopic cholecystectomy" disabled={formDisabled} />
                   </div>
 
+                  {/* Procedure Code Field directly under Description */}
+                  <div>
+                    <label htmlFor="procedure-code" className={labelClassName}>Procedure Code</label>
+                    <input id="procedure-code" type="text" value={form.procedureCode} onChange={(e) => updateField("procedureCode", e.target.value)} className={inputClassName} placeholder="e.g. 0012, 5431" disabled={formDisabled} />
+                  </div>
+
                   <div ref={icdSearchRef} className="relative">
                     <label htmlFor="icd10-search" className={labelClassName}>ICD-10 Code Search</label>
-                    <input id="icd10-search" type="text" value={icdSearch} onChange={(e) => { setIcdSearch(e.target.value); setIcdDropdownOpen(true); if (!e.target.value.trim()) updateField("icd10Code", ""); }} onFocus={() => setIcdDropdownOpen(true)} onBlur={() => setTimeout(() => setIcdDropdownOpen(false), 150)} className={inputClassName} placeholder="Search code or condition…" disabled={formDisabled} autoComplete="off" />
+                    <input id="icd10-search" type="text" value={icdSearch} onChange={(e) => { setIcdSearch(e.target.value); setIcdDropdownOpen(true); if (!e.target.value.trim()) updateField("icd10Code", ""); }} onFocus={() => setIcdDropdownOpen(true)} className={inputClassName} placeholder="Search code or condition…" disabled={formDisabled} autoComplete="off" />
                     {form.icd10Code && <p className="mt-1 font-mono text-[11px] text-teal-400/90">Selected: {form.icd10Code}</p>}
                     {icdDropdownOpen && filteredIcdOptions.length > 0 && (
                       <ul className="absolute z-20 mt-1 max-h-44 w-full overflow-y-auto rounded-sm border border-slate-700 bg-slate-950 shadow-xl">
                         {filteredIcdOptions.map((option) => (
                           <li key={option.code}>
-                            <button type="button" onMouseDown={() => selectIcdCode(option)} className="w-full px-3 py-2 text-left text-xs transition hover:bg-slate-800">
+                            <button type="button" onClick={() => selectIcdCode(option)} className="w-full px-3 py-2 text-left text-xs transition hover:bg-slate-800">
                               <span className="font-mono font-medium text-teal-400">{option.code}</span>
                               <span className="ml-2 text-slate-400">{option.description}</span>
                             </button>
@@ -609,25 +611,34 @@ export default function DashboardPage() {
                     )}
                   </div>
 
-                  <div className="grid grid-cols-2 gap-3">
+                  {/* Theatre configurations packing Date above isolated clock inputs */}
+                  <div className="space-y-3 border-t border-slate-800/50 pt-2">
                     <div>
-                      <label htmlFor="theatre-start" className={labelClassName}>Theatre Start</label>
-                      <input id="theatre-start" type="datetime-local" value={form.theatreStartTime} onChange={(e) => updateField("theatreStartTime", e.target.value)} className={inputClassName} disabled={formDisabled} />
+                      <label htmlFor="theatre-date" className={labelClassName}>Theatre Date</label>
+                      <input id="theatre-date" type="date" value={form.theatreDate} onChange={(e) => updateField("theatreDate", e.target.value)} className={inputClassName} disabled={formDisabled} />
                     </div>
-                    <div>
-                      <label htmlFor="theatre-end" className={labelClassName}>Theatre End</label>
-                      <input id="theatre-end" type="datetime-local" value={form.theatreEndTime} onChange={(e) => updateField("theatreEndTime", e.target.value)} className={inputClassName} disabled={formDisabled} />
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label htmlFor="theatre-start" className={labelClassName}>Theatre Start</label>
+                        <input id="theatre-start" type="time" value={form.theatreStartTime} onChange={(e) => updateField("theatreStartTime", e.target.value)} className={inputClassName} disabled={formDisabled} />
+                      </div>
+                      <div>
+                        <label htmlFor="theatre-end" className={labelClassName}>Theatre End</label>
+                        <input id="theatre-end" type="time" value={form.theatreEndTime} onChange={(e) => updateField("theatreEndTime", e.target.value)} className={inputClassName} disabled={formDisabled} />
+                      </div>
                     </div>
                   </div>
 
                   <div>
                     <label htmlFor="bmi-info" className={labelClassName}>BMI Info</label>
-                    <input id="bmi-info" type="text" value={form.bmiInfo} onChange={(e) => updateField("bmiInfo", e.target.value)} className={inputClassName} placeholder="28.4 — Obesity Class I" disabled={formDisabled} />
+                    <input id="bmi-info" type="text" value={form.bmiInfo} onChange={(e) => updateField("bmiInfo", e.target.value)} className={inputClassName} placeholder="28.4" disabled={formDisabled} />
                   </div>
 
+                  {/* Fully persistent Modifiers selector menu */}
                   <div ref={modSearchRef} className="relative">
                     <label htmlFor="modifiers-search" className={labelClassName}>Modifiers Lookup</label>
-                    <input id="modifiers-search" type="text" value={modSearch} onChange={(e) => { setModSearch(e.target.value); setModDropdownOpen(true); }} onFocus={() => setModDropdownOpen(true)} onBlur={() => setTimeout(() => setModDropdownOpen(false), 180)} className={inputClassName} placeholder="Type keyword or code..." disabled={formDisabled} autoComplete="off" />
+                    <input id="modifiers-search" type="text" value={modSearch} onChange={(e) => { setModSearch(e.target.value); setModDropdownOpen(true); }} onFocus={() => setModDropdownOpen(true)} className={inputClassName} placeholder="Type keyword or code..." disabled={formDisabled} autoComplete="off" />
 
                     {activeModifiersList.length > 0 && (
                       <div className="mt-2 flex flex-wrap gap-1">
@@ -641,12 +652,12 @@ export default function DashboardPage() {
                     )}
 
                     {modDropdownOpen && filteredModifierOptions.length > 0 && (
-                      <ul className="absolute z-20 mt-1 max-h-52 w-full overflow-y-auto rounded-sm border border-slate-700 bg-slate-950 shadow-xl">
+                      <ul className="absolute z-20 mt-1 max-h-52 w-full overflow-y-auto rounded-sm border border-slate-700 bg-slate-950 shadow-xl divide-y divide-slate-900">
                         {filteredModifierOptions.map((option) => {
                           const isSelected = activeModifiersList.includes(option.code);
                           return (
                             <li key={option.code}>
-                              <button type="button" onMouseDown={() => toggleModifierCode(option.code)} className={`w-full px-3 py-2 text-left text-xs transition flex items-center justify-between hover:bg-slate-800 ${isSelected ? "bg-slate-900" : ""}`}>
+                              <button type="button" onClick={() => toggleModifierCode(option.code)} className={`w-full px-3 py-2 text-left text-xs transition flex items-center justify-between hover:bg-slate-800 ${isSelected ? "bg-slate-900/60" : ""}`}>
                                 <span className="min-w-0 flex-1 pr-2">
                                   <span className="font-mono font-medium text-teal-400 mr-2">[{option.code}]</span>
                                   <span className="text-slate-300">{option.label}</span>
@@ -662,7 +673,7 @@ export default function DashboardPage() {
 
                   <div>
                     <label htmlFor="extra-notes" className={labelClassName}>Extra Notes</label>
-                    <textarea id="extra-notes" rows={2} value={form.extraNotes} onChange={(e) => updateField("extraNotes", e.target.value)} className={`${inputClassName} resize-none`} placeholder="Additional details..." disabled={formDisabled} />
+                    <textarea id="extra-notes" rows={2} value={form.extraNotes} onChange={(e) => updateField("extraNotes", e.target.value)} className={`${inputClassName} resize-none`} placeholder="Additional transaction tracking parameters..." disabled={formDisabled} />
                   </div>
                 </form>
 
@@ -786,7 +797,7 @@ export default function DashboardPage() {
                     <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-200">Monthly Practice Analysis Pack</h3>
                     <span className="rounded-sm border border-teal-500/30 bg-teal-950/30 px-2 py-0.5 text-[9px] font-medium uppercase tracking-wider text-teal-400">Premium</span>
                   </div>
-                  <p className="text-sm leading-relaxed text-slate-400">Detailed revenue breakdown, rejection analysis, and benchmarking report for {monthRange.split(" – ")[1] ?? "this month"}. Coming soon.</p>
+                  <p className="text-sm leading-relaxed text-slate-400">Detailed revenue breakdown, rejection analysis, and benchmarking report for {monthRange.split(" – ")[1] || "this month"}. Coming soon.</p>
                   <button type="button" disabled className="mt-5 rounded-sm border border-slate-700 bg-slate-900/60 px-4 py-2 text-[10px] font-medium uppercase tracking-wide text-slate-500">View analysis</button>
                 </div>
               </div>
@@ -796,7 +807,7 @@ export default function DashboardPage() {
 
         {batchCompleted && (
           <div className="mt-6 rounded-sm border border-slate-700/80 bg-slate-900/60 px-5 py-4 text-center">
-            <p className="text-sm font-medium text-slate-200">Batch session closed</p>
+            <p className="text-sm font-medium text-slate-200">Batch session closed Packs</p>
             <p className="mt-1 text-xs text-slate-500">Batch finalized with all entries securely written to the audit log. Start a new batch from the header when ready.</p>
           </div>
         )}
