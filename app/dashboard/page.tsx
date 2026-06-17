@@ -56,6 +56,7 @@ const emptyForm = (): ClaimFormState => ({
   theatreDate: getTodayDateString(),
   theatreStartTime: "",
   theatreEndTime: "",
+  weight: "", height: "",
   bmiInfo: "",
   modifiers: "",
   extraNotes: "",
