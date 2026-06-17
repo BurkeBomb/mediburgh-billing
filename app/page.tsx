@@ -3,10 +3,6 @@
 import { useState, useEffect, useRef } from "react";
 import { createClient } from "@/utils/supabase";
 
-function getErrorMessage(err: unknown, fallback: string) {
-  return err instanceof Error ? err.message : fallback;
-}
-
 export default function AuthenticationGatePage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -25,7 +21,7 @@ export default function AuthenticationGatePage() {
   const supabase = createClient();
   const hasCheckedSession = useRef(false);
 
-  // Insulated mounting session validation check
+  // Insulated mounting session validation check with clean error catching
   useEffect(() => {
     async function checkExistingSession() {
       if (hasCheckedSession.current) return;
@@ -33,7 +29,15 @@ export default function AuthenticationGatePage() {
 
       try {
         const { data: authData, error: authErr } = await supabase.auth.getUser();
-        if (authErr || !authData?.user) return;
+        
+        if (authErr) {
+          // Stale/invalid token configuration fallback
+          console.warn("Stale authentication session purged cleanly:", authErr.message);
+          await supabase.auth.signOut();
+          return;
+        }
+
+        if (!authData?.user) return;
 
         const { data: profile, error: profileErr } = await supabase
           .from("profiles")
@@ -49,11 +53,11 @@ export default function AuthenticationGatePage() {
           window.location.replace("/office");
         }
       } catch (err) {
-        console.error("Session initialization log:", err);
+        console.error("Session mounting exception handled:", err);
       }
     }
     checkExistingSession();
-  }, [supabase]);
+  }, []);
 
   const handleAuthenticationSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -115,7 +119,7 @@ export default function AuthenticationGatePage() {
         if (registerErr) throw registerErr;
         if (!registerData?.user) throw new Error("Could not initialize your user tracking security account.");
 
-        // If your Supabase instance forces email confirmation links, display clean notification instructions
+        // If email confirmation links are active, guide the user cleanly
         if (registerData.session === null) {
           setMessage("Practice profile token initialized! Please check your email inbox to verify your connection and access the portal.");
           setFormClear();
@@ -125,9 +129,9 @@ export default function AuthenticationGatePage() {
         setMessage("Account created and verified. Synchronizing control portal environment...");
         window.location.replace("/dashboard");
       }
-    } catch (err: unknown) {
+    } catch (err: any) {
       console.error("Authentication Gate Exception:", err);
-      setError(getErrorMessage(err, "Credential pipeline handshake error."));
+      setError(err.message || "Credential pipeline handshake error.");
     } finally {
       setProcessing(false);
     }
