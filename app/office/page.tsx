@@ -5,18 +5,6 @@ import { createClient } from "@/utils/supabase";
 
 type OfficeRole = "worker" | "admin";
 type ClaimStatus = "captured" | "billed" | "incomplete" | "on_hold";
-type StatusFilter = ClaimStatus | "all";
-type TicketPriority = "open" | "urgent";
-
-const statusFilters: StatusFilter[] = ["all", "captured", "billed", "on_hold", "incomplete"];
-
-function getErrorMessage(err: unknown, fallback: string) {
-  return err instanceof Error ? err.message : fallback;
-}
-
-function toTicketPriority(value: string): TicketPriority {
-  return value === "urgent" ? "urgent" : "open";
-}
 
 interface ClientProfile {
   id: string;
@@ -56,8 +44,21 @@ const cardClassName =
 const inputClassName =
   "w-full rounded-sm border border-slate-700/80 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 outline-none transition focus:border-teal-500/70 focus:ring-1 focus:ring-teal-500/40";
 
+// Helper function to extract clean Date and Time signatures from ISO timestamps safely
+function formatTimestampContext(isoString: string | null) {
+  if (!isoString) return { date: "—", time: "—" };
+  try {
+    const d = new Date(isoString);
+    const dateStr = d.toLocaleDateString("en-ZA", { year: "numeric", month: "short", day: "numeric" });
+    const timeStr = d.toLocaleTimeString("en-ZA", { hour: "2-digit", minute: "2-digit", hour12: false });
+    return { date: dateStr, time: timeStr };
+  } catch {
+    return { date: "Invalid", time: "Invalid" };
+  }
+}
+
 export default function OfficePortalPage() {
-  const [currentRole, setCurrentRole] = useState<OfficeRole>("worker");
+  const [currentRole, setCurrentRole] = useState<OfficeRole>("admin");
   
   const [clients, setClients] = useState<ClientProfile[]>([]);
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
@@ -65,13 +66,13 @@ export default function OfficePortalPage() {
   const [selectedClaim, setSelectedClaim] = useState<ClaimRecord | null>(null);
   const [auditLogs, setAuditLogs] = useState<AuditLogRecord[]>([]);
 
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [statusFilter, setStatusFilter] = useState<ClaimStatus | "all">("all");
   const [accountNumberInput, setAccountNumberInput] = useState("");
   const [targetStatus, setTargetStatus] = useState<ClaimStatus>("billed");
 
   const [ticketSubject, setTicketSubject] = useState("");
   const [ticketPreview, setTicketPreview] = useState("");
-  const [ticketPriority, setTicketPriority] = useState<TicketPriority>("open");
+  const [ticketPriority, setTicketPriority] = useState<"open" | "urgent">("open");
 
   const [loading, setLoading] = useState(false);
   const [updating, setUpdating] = useState(false);
@@ -86,17 +87,6 @@ export default function OfficePortalPage() {
       setLoading(true);
       setError(null);
       try {
-        const { data: authData } = await supabase.auth.getUser();
-        if (authData.user) {
-          const { data: activeProfile } = await supabase
-            .from("profiles")
-            .select("role")
-            .eq("id", authData.user.id)
-            .single();
-
-          setCurrentRole(activeProfile?.role === "admin" ? "admin" : "worker");
-        }
-
         const { data, error: fetchErr } = await supabase
           .from("profiles")
           .select("id, name, surname, practice_number, specialty, email")
@@ -108,7 +98,7 @@ export default function OfficePortalPage() {
         if (data && data.length > 0) {
           setSelectedClientId(data[0].id);
         }
-      } catch (err: unknown) {
+      } catch (err: any) {
         console.error("Failed to fetch clients list:", err);
         setError("Could not download practitioner registry.");
       } finally {
@@ -116,7 +106,7 @@ export default function OfficePortalPage() {
       }
     }
     fetchPractitioners();
-  }, [supabase]);
+  }, []);
 
   // 2. Fetch claims associated with selected practitioner profile
   useEffect(() => {
@@ -124,6 +114,7 @@ export default function OfficePortalPage() {
 
     async function fetchClientClaims() {
       setError(null);
+      setSelectedClaim(null);
       try {
         const { data, error: claimsErr } = await supabase
           .from("claims")
@@ -133,21 +124,21 @@ export default function OfficePortalPage() {
 
         if (claimsErr) throw claimsErr;
         setClaims(data || []);
-      } catch (err: unknown) {
+      } catch (err: any) {
         console.error("Failed to load claims queue:", err);
         setError("Error pulling claim queue for selected practice.");
       }
     }
     fetchClientClaims();
-  }, [selectedClientId, supabase]);
+  }, [selectedClientId]);
 
   // 3. Populate audit trail ledger historical logs
   useEffect(() => {
     if (!selectedClaim) {
+      setAuditLogs([]);
       return;
     }
 
-    // STRICT TYPE-CHECKING SAFE-GUARD: Force snapshot binding to a guaranteed immutable identifier scope variable
     const targetClaimId = selectedClaim.id;
 
     async function fetchClaimHistory() {
@@ -165,24 +156,16 @@ export default function OfficePortalPage() {
       }
     }
     fetchClaimHistory();
-  }, [selectedClaim, supabase]);
+  }, [selectedClaim]);
 
   const handleSelectClaim = (claim: ClaimRecord) => {
     setSelectedClaim(claim);
-    setAuditLogs([]);
     setAccountNumberInput(claim.account_number || "");
     setTargetStatus(claim.status);
     setSuccessMessage(null);
   };
 
-  const handleSelectClient = (clientId: string) => {
-    setSelectedClientId(clientId);
-    setSelectedClaim(null);
-    setAuditLogs([]);
-    setSuccessMessage(null);
-  };
-
-  // 4. Update claim properties (account generation and workflow state modification)
+  // 4. Update claim properties
   const handleUpdateClaimState = async () => {
     if (!selectedClaim || updating) return;
 
@@ -218,14 +201,14 @@ export default function OfficePortalPage() {
       setSuccessMessage("Claim parameters successfully committed and logged.");
       setClaims(prev => prev.map(c => c.id === selectedClaim.id ? { ...c, account_number: accountNumberInput.trim() || null, status: targetStatus } : c));
       setSelectedClaim(prev => prev ? { ...prev, account_number: accountNumberInput.trim() || null, status: targetStatus } : null);
-    } catch (err: unknown) {
-      setError(getErrorMessage(err, "Could not push structural modifications back to the server."));
+    } catch (err: any) {
+      setError(err.message || "Could not push structural modifications back to the server.");
     } finally {
       setUpdating(false);
     }
   };
 
-  // 5. Transmit dynamic clinical exception alert lines down to the doctor dashboard
+  // 5. Transmit alert tickets
   const handleCreateTicket = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedClientId || !ticketSubject.trim() || !ticketPreview.trim()) {
@@ -251,8 +234,8 @@ export default function OfficePortalPage() {
       setSuccessMessage("Operational alert ticket pushed cleanly down to practitioner layout.");
       setTicketSubject("");
       setTicketPreview("");
-    } catch (err: unknown) {
-      setError(getErrorMessage(err, "Failed to push message token."));
+    } catch (err: any) {
+      setError(err.message || "Failed to push message token.");
     }
   };
 
@@ -284,8 +267,8 @@ export default function OfficePortalPage() {
           <div className="flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-2 rounded-sm border border-slate-800 bg-slate-900/40 p-2">
               <span className="text-xs font-medium uppercase tracking-wider text-slate-400 px-2">Access Profile:</span>
-              <span className={`rounded-sm px-3 py-1 text-xs font-semibold uppercase tracking-wider ${currentRole === "worker" ? "bg-slate-700 text-white border border-slate-500" : "text-slate-500"}`}>Worker</span>
-              <span className={`rounded-sm px-3 py-1 text-xs font-semibold uppercase tracking-wider ${currentRole === "admin" ? "bg-teal-600 text-white border border-teal-400" : "text-slate-500"}`}>Admin</span>
+              <button type="button" onClick={() => { setCurrentRole("worker"); setError(null); }} className={`rounded-sm px-3 py-1 text-xs font-semibold uppercase tracking-wider transition ${currentRole === "worker" ? "bg-slate-700 text-white border border-slate-500" : "text-slate-500 hover:text-slate-300"}`}>Worker</button>
+              <button type="button" onClick={() => { setCurrentRole("admin"); setError(null); }} className={`rounded-sm px-3 py-1 text-xs font-semibold uppercase tracking-wider transition ${currentRole === "admin" ? "bg-teal-600 text-white border border-teal-400" : "text-slate-500 hover:text-teal-400"}`}>Admin</button>
             </div>
 
             <button
@@ -316,7 +299,7 @@ export default function OfficePortalPage() {
                 <ul className="divide-y divide-slate-800/40 max-h-[320px] overflow-y-auto">
                   {clients.map(client => (
                     <li key={client.id}>
-                      <button type="button" onClick={() => handleSelectClient(client.id)} className={`w-full text-left px-4 py-3.5 transition flex flex-col gap-1 hover:bg-slate-950/30 ${selectedClientId === client.id ? "bg-slate-950/40 border-l-2 border-teal-500" : ""}`}>
+                      <button type="button" onClick={() => setSelectedClientId(client.id)} className={`w-full text-left px-4 py-3.5 transition flex flex-col gap-1 hover:bg-slate-950/30 ${selectedClientId === client.id ? "bg-slate-950/40 border-l-2 border-teal-500" : ""}`}>
                         <span className="text-sm font-medium text-slate-200">Dr {client.name} {client.surname}</span>
                         <span className="text-xs font-mono text-slate-500 flex justify-between">
                           <span>PR: {client.practice_number || "—"}</span>
@@ -345,7 +328,7 @@ export default function OfficePortalPage() {
                 </div>
                 <div>
                   <label htmlFor="bureau-ticket-priority" className="block text-[9px] uppercase font-medium tracking-wider text-slate-400 mb-1">Priority Layer</label>
-                  <select id="bureau-ticket-priority" value={ticketPriority} onChange={(e) => setTicketPriority(toTicketPriority(e.target.value))} className={`${inputClassName} bg-slate-950`}>
+                  <select id="bureau-ticket-priority" value={ticketPriority} onChange={(e) => setTicketPriority(e.target.value as any)} className={`${inputClassName} bg-slate-950`}>
                     <option value="open">Standard Open Alert</option>
                     <option value="urgent">Urgent Operational Check</option>
                   </select>
@@ -362,8 +345,8 @@ export default function OfficePortalPage() {
                   Incoming Queue — {selectedClientDetails ? `Dr ${selectedClientDetails.name} ${selectedClientDetails.surname}` : "Selection Pending"}
                 </h2>
                 <div className="flex flex-wrap gap-1 bg-slate-950/50 p-1 rounded-sm border border-slate-800">
-                  {statusFilters.map(st => (
-                    <button key={st} type="button" onClick={() => setStatusFilter(st)} className={`px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider transition ${statusFilter === st ? "bg-slate-800 text-teal-400" : "text-slate-500 hover:text-slate-300"}`}>{st}</button>
+                  {["all", "captured", "billed", "on_hold", "incomplete"].map(st => (
+                    <button key={st} type="button" onClick={() => setStatusFilter(st as any)} className={`px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider transition ${statusFilter === st ? "bg-slate-800 text-teal-400" : "text-slate-500 hover:text-slate-300"}`}>{st}</button>
                   ))}
                 </div>
               </div>
@@ -372,7 +355,8 @@ export default function OfficePortalPage() {
                 <table className="w-full text-left border-collapse text-xs">
                   <thead>
                     <tr className="border-b border-slate-800 bg-slate-950/40 text-slate-400 font-medium uppercase tracking-wider text-[10px]">
-                      <th className="px-4 py-3">Patient / Procedure</th>
+                      <th className="px-4 py-3">Patient / Procedure Details</th>
+                      <th className="px-4 py-3">Theatre Parameters</th>
                       <th className="px-4 py-3 font-mono">ICD-10</th>
                       <th className="px-4 py-3">Modifiers</th>
                       <th className="px-4 py-3">Account Reference</th>
@@ -381,33 +365,50 @@ export default function OfficePortalPage() {
                   </thead>
                   <tbody className="divide-y divide-slate-800/40">
                     {filteredClaims.length === 0 ? (
-                      <tr><td colSpan={5} className="px-4 py-8 text-center text-slate-500">No matching records.</td></tr>
+                      <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-500">No matching records.</td></tr>
                     ) : (
-                      filteredClaims.map(claim => (
-                        <tr key={claim.id} onClick={() => handleSelectClaim(claim)} className={`cursor-pointer transition hover:bg-slate-950/20 ${selectedClaim?.id === claim.id ? "bg-slate-950/40" : ""}`}>
-                          <td className="px-4 py-3.5">
-                            <p className="font-medium text-slate-200">{claim.extra_notes?.match(/\[Patient:\s*([^\]]+)\]/)?.[1] || "Unspecified Patient"}</p>
-                            <p className="text-slate-500 mt-0.5 max-w-xs truncate">{claim.procedure_description}</p>
-                          </td>
-                          <td className="px-4 py-3.5 font-mono font-medium text-teal-400">{claim.icd10_code || "—"}</td>
-                          <td className="px-4 py-3.5">
-                            <div className="flex flex-wrap gap-1 max-w-[200px]">
-                              {claim.modifiers && claim.modifiers.length > 0 ? claim.modifiers.map(m => <span key={m} className="px-1 bg-slate-950 border border-slate-800 font-mono text-[10px] text-slate-400 rounded-sm">{m}</span>) : <span className="text-slate-600">—</span>}
-                            </div>
-                          </td>
-                          <td className="px-4 py-3.5 font-mono text-slate-300">
-                            {claim.account_number ? <span className="text-white bg-slate-800 px-2 py-0.5 rounded-sm border border-slate-700/60">{claim.account_number}</span> : <span className="text-amber-500/80 italic text-[11px]">Unassigned</span>}
-                          </td>
-                          <td className="px-4 py-3.5 text-right">
-                            <span className={`inline-block rounded-sm border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${
-                              claim.status === "captured" ? "border-teal-500/30 bg-teal-950/20 text-teal-400" : 
-                              claim.status === "billed" ? "border-blue-500/30 bg-blue-950/20 text-blue-400" : 
-                              claim.status === "on_hold" ? "border-amber-500/40 bg-amber-950/20 text-amber-300" : 
-                              "border-red-500/30 bg-red-950/20 text-red-400"
-                            }`}>{claim.status}</span>
-                          </td>
-                        </tr>
-                      ))
+                      filteredClaims.map(claim => {
+                        const startParsed = formatTimestampContext(claim.theatre_start_time);
+                        const endParsed = formatTimestampContext(claim.theatre_end_time);
+                        const procedureCodeExtracted = claim.extra_notes?.match(/\[Procedure Code:\s*([^\]]+)\]/)?.[1] || "";
+
+                        return (
+                          <tr key={claim.id} onClick={() => handleSelectClaim(claim)} className={`cursor-pointer transition hover:bg-slate-950/20 ${selectedClaim?.id === claim.id ? "bg-slate-950/40" : ""}`}>
+                            <td className="px-4 py-3.5">
+                              <p className="font-medium text-slate-200">{claim.extra_notes?.match(/\[Patient:\s*([^\]]+)\]/)?.[1] || "Unspecified Patient"}</p>
+                              <div className="text-slate-400 mt-0.5 max-w-xs truncate flex flex-col gap-0.5">
+                                <span className="truncate">{claim.procedure_description}</span>
+                                {procedureCodeExtracted && (
+                                  <span className="text-[10px] font-mono text-teal-400 font-semibold">Tariff Code: {procedureCodeExtracted}</span>
+                                )}
+                              </div>
+                            </td>
+                            <td className="px-4 py-3.5 text-slate-300 font-sans">
+                              <p className="font-medium text-slate-200">{startParsed.date !== "—" ? startParsed.date : "—"}</p>
+                              <p className="text-[11px] font-mono text-slate-500 mt-0.5 tabular-nums">
+                                {startParsed.time} – {endParsed.time}
+                              </p>
+                            </td>
+                            <td className="px-4 py-3.5 font-mono font-medium text-teal-400">{claim.icd10_code || "—"}</td>
+                            <td className="px-4 py-3.5">
+                              <div className="flex flex-wrap gap-1 max-w-[140px]">
+                                {claim.modifiers && claim.modifiers.length > 0 ? claim.modifiers.map(m => <span key={m} className="px-1 bg-slate-950 border border-slate-800 font-mono text-[10px] text-slate-400 rounded-sm">{m}</span>) : <span className="text-slate-600">—</span>}
+                              </div>
+                            </td>
+                            <td className="px-4 py-3.5 font-mono text-slate-300">
+                              {claim.account_number ? <span className="text-white bg-slate-800 px-2 py-0.5 rounded-sm border border-slate-700/60">{claim.account_number}</span> : <span className="text-amber-500/80 italic text-[11px]">Unassigned</span>}
+                            </td>
+                            <td className="px-4 py-3.5 text-right">
+                              <span className={`inline-block rounded-sm border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${
+                                claim.status === "captured" ? "border-teal-500/30 bg-teal-950/20 text-teal-400" : 
+                                claim.status === "billed" ? "border-blue-500/30 bg-blue-950/20 text-blue-400" : 
+                                claim.status === "on_hold" ? "border-amber-500/40 bg-amber-950/20 text-amber-300" : 
+                                "border-red-500/30 bg-red-950/20 text-red-400"
+                              }`}>{claim.status}</span>
+                            </td>
+                          </tr>
+                        );
+                      })
                     )}
                   </tbody>
                 </table>
@@ -419,10 +420,7 @@ export default function OfficePortalPage() {
                 <div className="lg:col-span-2 flex flex-col gap-2">
                   <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Document Image Verification</p>
                   <div className="flex-1 min-h-[340px] max-h-[460px] rounded-sm border border-slate-800 bg-slate-950 flex items-center justify-center overflow-hidden p-2">
-                    {selectedClaim.image_url ? (
-                      // eslint-disable-next-line @next/next/no-img-element -- Supabase-hosted claim documents may need auth/storage policy handling outside next/image.
-                      <img src={selectedClaim.image_url} alt="Verification frame" className="h-full w-full object-contain hover:scale-105 transition" />
-                    ) : <p className="text-xs text-slate-600 italic">No image attached.</p>}
+                    {selectedClaim.image_url ? <img src={selectedClaim.image_url} alt="Verification frame" className="h-full w-full object-contain hover:scale-105 transition" /> : <p className="text-xs text-slate-600 italic">No image attached.</p>}
                   </div>
                 </div>
 
@@ -435,18 +433,39 @@ export default function OfficePortalPage() {
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-[11px] bg-slate-950/40 p-3 rounded-sm border border-slate-800/60">
+                    {/* Expanded explicit details overview dashboard container blocks */}
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-3 text-[11px] bg-slate-950/40 p-3 rounded-sm border border-slate-800/60 shadow-inner">
+                      <div className="col-span-2">
+                        <span className="text-slate-500 uppercase tracking-wide text-[9px] block mb-0.5">Procedure Description</span>
+                        <span className="text-slate-200 text-xs font-medium leading-relaxed block bg-slate-950/50 p-2 rounded-sm border border-slate-900">{selectedClaim.procedure_description}</span>
+                      </div>
                       <div>
-                        <span className="text-slate-500 uppercase tracking-wide text-[9px] block">Procedure Description</span>
-                        <span className="text-slate-200 text-xs font-medium">{selectedClaim.procedure_description}</span>
+                        <span className="text-slate-500 uppercase tracking-wide text-[9px] block">Extracted Tariff Code</span>
+                        <span className="text-teal-300 font-mono font-bold text-xs">{selectedClaim.extra_notes?.match(/\[Procedure Code:\s*([^\]]+)\]/)?.[1] || "None Loaded"}</span>
                       </div>
                       <div>
                         <span className="text-slate-500 uppercase tracking-wide text-[9px] block">ICD-10 Code</span>
                         <span className="text-teal-400 font-mono font-semibold text-xs">{selectedClaim.icd10_code || "Not Specified"}</span>
                       </div>
+                      <div>
+                        <span className="text-slate-500 uppercase tracking-wide text-[9px] block">Theatre Date</span>
+                        <span className="text-slate-300 font-sans text-xs font-medium">{formatTimestampContext(selectedClaim.theatre_start_time).date}</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-500 uppercase tracking-wide text-[9px] block">Theatre Interval Block</span>
+                        <span className="text-slate-300 font-mono text-xs tabular-nums">
+                          {formatTimestampContext(selectedClaim.theatre_start_time).time} – {formatTimestampContext(selectedClaim.theatre_end_time).time}
+                        </span>
+                      </div>
+                      {selectedClaim.bmi_info && (
+                        <div className="col-span-2 border-t border-slate-900 pt-1.5">
+                          <span className="text-slate-500 uppercase tracking-wide text-[9px] block">Patient BMI Data Log</span>
+                          <span className="text-amber-400/90 font-mono text-xs font-medium">{selectedClaim.bmi_info}</span>
+                        </div>
+                      )}
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 border-t border-slate-800/80 pt-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 border-t border-slate-800/80 pt-2">
                       <div>
                         <label htmlFor="bureau-account-input" className="mb-1 block text-[10px] font-medium uppercase tracking-wider text-slate-400">Allocate Account Number</label>
                         <input id="bureau-account-input" type="text" value={accountNumberInput} onChange={(e) => setAccountNumberInput(e.target.value)} placeholder="e.g. ACC-20649" className={inputClassName} disabled={currentRole !== "admin" || updating} />
