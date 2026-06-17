@@ -209,7 +209,7 @@ export default function DashboardPage() {
 
     const msgChannel = supabase
       .channel(`msg-sync-${selectedTicketId}`)
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "ticket_messages", filter: `ticket_id=eq.${selectedTicketId}` }, (payload) => {
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "ticket_messages", filter: `ticket_id=eq.${selectedTicketId}` }, (payload: { new: TicketMessage }) => {
         setTicketMessages(prev => [...prev, payload.new as TicketMessage]);
       })
       .subscribe();
@@ -581,4 +581,3 @@ export default function DashboardPage() {
     </div>
   );
 }
-
