@@ -1,6 +1,6 @@
 "use client";
 
-import { DragEvent, useCallback, useMemo, useRef, useState, useEffect } from "react";
+import { useCallback, useMemo, useRef, useState, useEffect } from "react";
 import { createClient } from "@/utils/supabase";
 import icd10Database from "@/data/ICD10.json";
 
@@ -42,6 +42,11 @@ interface TicketMessage {
   created_at: string;
 }
 
+interface IcdCodeItem {
+  ICD10CODE: string;
+  "DESCRIPTION\r": string;
+}
+
 const getTodayDateString = () => {
   const today = new Date();
   const offset = today.getTimezoneOffset() * 60000;
@@ -72,34 +77,24 @@ const calculateBMI = (weightKg: string, heightCm: string): string => {
   return (w / (h * h)).toFixed(1);
 };
 
-const getMonthRangeLabel = (date: Date) => {
-  return date.toLocaleString("en-ZA", { month: "long", year: "numeric" });
-};
-
-const ALL_ICD10_CODES = icd10Database.Employees.Employee;
+const ALL_ICD10_CODES = icd10Database.Employees.Employee as IcdCodeItem[];
 
 const labelClassName = "block text-[10px] font-medium uppercase tracking-wider text-slate-400 mb-1";
 const inputClassName = "w-full rounded-sm border border-slate-700/80 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 outline-none focus:border-teal-500/70";
 
 export default function DashboardPage() {
-  const formRef = useRef<HTMLFormElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const icdSearchRef = useRef<HTMLDivElement>(null);
-  const modSearchRef = useRef<HTMLDivElement>(null);
 
   const [form, setForm] = useState<ClaimFormState>(emptyForm());
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
-  const [isDragging, setIsDragging] = useState(false);
 
   const [icdSearch, setIcdSearch] = useState("");
   const [icdDropdownOpen, setIcdDropdownOpen] = useState(false);
-  const [modSearch, setModSearch] = useState("");
-  const [modDropdownOpen, setModDropdownOpen] = useState(false);
 
   const [submittedCount, setSubmittedCount] = useState(0);
   const [holdCount, setHoldCount] = useState(0);
-  const [batchCompleted, setBatchCompleted] = useState(false);
 
   const [totalClaimsCount, setTotalClaimsCount] = useState<number | null>(null);
   const [valueBilledTotal, setValueBilledTotal] = useState<number | null>(null);
@@ -111,22 +106,29 @@ export default function DashboardPage() {
   const [chatReplyInput, setChatReplyInput] = useState("");
 
   const [error, setError] = useState<string | null>(null);
-  const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [realtimeTrigger, setRealtimeTrigger] = useState(0);
 
   const supabase = createClient();
-  const monthRange = useMemo(() => getMonthRangeLabel(new Date()), []);
 
-  // Auto-calculate BMI when weight or height changes
+  // Auto-calculate BMI on form metric changes
   useEffect(() => {
     const bmi = calculateBMI(form.weight, form.height);
     setForm(p => ({ ...p, bmiInfo: bmi }));
   }, [form.weight, form.height]);
 
+  const filteredIcdCodes = useMemo(() => {
+    if (!icdSearch.trim()) return ALL_ICD10_CODES.slice(0, 10);
+    const query = icdSearch.toLowerCase();
+    return ALL_ICD10_CODES.filter(
+      item =>
+        item.ICD10CODE.toLowerCase().includes(query) ||
+        item["DESCRIPTION\r"].toLowerCase().includes(query)
+    ).slice(0, 10);
+  }, [icdSearch]);
+
   const medicalAidWarnings = useMemo(() => {
     const warnings: string[] = [];
-    const codes = form.procedureCode.split(",").map(c => c.trim());
     const mods = form.modifiers.split(",").map(m => m.trim());
 
     if (form.medicalAid === "GEMS" && mods.includes("0147 + 0011") && !form.extraNotes.toLowerCase().includes("emergency")) {
@@ -139,12 +141,11 @@ export default function DashboardPage() {
       warnings.push("Rule 0043 Warning: Patient age validation parameters must be clearly specified within your note layout.");
     }
     return warnings;
-  }, [form.medicalAid, form.procedureCode, form.modifiers, form.bmiInfo, form.extraNotes]);
+  }, [form.medicalAid, form.modifiers, form.bmiInfo, form.extraNotes]);
 
   useEffect(() => {
     function handleOutsideDropdownClicks(event: MouseEvent) {
       if (icdSearchRef.current && !icdSearchRef.current.contains(event.target as Node)) setIcdDropdownOpen(false);
-      if (modSearchRef.current && !modSearchRef.current.contains(event.target as Node)) setModDropdownOpen(false);
     }
     document.addEventListener("mousedown", handleOutsideDropdownClicks);
     return () => document.removeEventListener("mousedown", handleOutsideDropdownClicks);
@@ -173,7 +174,7 @@ export default function DashboardPage() {
       if (claimsChannel) supabase.removeChannel(claimsChannel);
       if (ticketsChannel) supabase.removeChannel(ticketsChannel);
     };
-  }, []);
+  }, [supabase]);
 
   useEffect(() => {
     async function fetchLiveMetrics() {
@@ -197,25 +198,29 @@ export default function DashboardPage() {
       }
     }
     fetchLiveMetrics();
-  }, [submittedCount, holdCount, realtimeTrigger]);
+  }, [submittedCount, holdCount, realtimeTrigger, supabase]);
 
   useEffect(() => {
     if (!selectedTicketId) return;
+    let msgChannel: any;
+
     async function fetchMessages() {
       const { data } = await supabase.from("ticket_messages").select("*").eq("ticket_id", selectedTicketId).order("created_at", { ascending: true });
       if (data) setTicketMessages(data as any[]);
+
+      msgChannel = supabase
+        .channel(`msg-sync-${selectedTicketId}`)
+        .on("postgres_changes", { event: "INSERT", schema: "public", table: "ticket_messages", filter: `ticket_id=eq.${selectedTicketId}` }, (payload: { new: TicketMessage }) => {
+          setTicketMessages(prev => [...prev, payload.new as TicketMessage]);
+        })
+        .subscribe();
     }
     fetchMessages();
 
-    const msgChannel = supabase
-      .channel(`msg-sync-${selectedTicketId}`)
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "ticket_messages", filter: `ticket_id=eq.${selectedTicketId}` }, (payload: { new: TicketMessage }) => {
-        setTicketMessages(prev => [...prev, payload.new as TicketMessage]);
-      })
-      .subscribe();
-
-    return () => { supabase.removeChannel(msgChannel); };
-  }, [selectedTicketId]);
+    return () => { 
+      if (msgChannel) supabase.removeChannel(msgChannel); 
+    };
+  }, [selectedTicketId, supabase]);
 
   const handleSendChatReply = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -244,12 +249,26 @@ export default function DashboardPage() {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
     setImageFile(file);
     setImagePreviewUrl(URL.createObjectURL(file));
   };
 
-  const handlePersistClaim = async (targetStatus: any) => {
-    if (batchCompleted || isSaving) return;
+  const clearImage = () => {
+    if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
+    setImagePreviewUrl(null);
+    setImageFile(null);
+  };
+
+  const resetForm = () => {
+    setForm(emptyForm());
+    clearImage();
+    setIcdSearch("");
+    setError(null);
+  };
+
+  const handlePersistClaim = async (targetStatus: ClaimStatus) => {
+    if (isSaving) return;
     if (targetStatus === "captured") {
       const errCheck = validateForm();
       if (errCheck) { setError(errCheck); return; }
@@ -268,9 +287,11 @@ export default function DashboardPage() {
       }
 
       const { data: authData } = await supabase.auth.getUser();
-      const currentUserId = authData!.user.id;
+      if (!authData?.user) throw new Error("Authentication state lost.");
+      const currentUserId = authData.user.id;
 
-      const compositeNotes = `[Patient: ${form.patientName.trim()} ${form.patientSurname.trim()}] [Procedure Code: ${form.procedureCode.trim() || "None assigned"}] [Medical Aid: ${form.medicalAid}] ${form.extraNotes.trim()}`.trim();
+      // Appending metadata tags to notes layout accurately
+      const compositeNotes = `[Patient: ${form.patientName.trim()} ${form.patientSurname.trim()}] [Procedure Code: ${form.procedureCode.trim() || "None assigned"}] [Medical Aid: ${form.medicalAid}] [Weight: ${form.weight || "N/A"}kg] [Height: ${form.height || "N/A"}cm] [BMI: ${form.bmiInfo || "N/A"}] ${form.extraNotes.trim()}`.trim();
 
       const { data: record, error: claimErr } = await supabase.from("claims").insert([
         {
@@ -280,7 +301,7 @@ export default function DashboardPage() {
           theatre_start_time: form.theatreStartTime ? new Date(`${form.theatreDate}T${form.theatreStartTime}`).toISOString() : null,
           theatre_end_time: form.theatreEndTime ? new Date(`${form.theatreDate}T${form.theatreEndTime}`).toISOString() : null,
           bmi_info: form.bmiInfo ? parseFloat(form.bmiInfo) : null,
-          modifiers: form.modifiers ? form.modifiers.split(",").map(m => m.trim()) : [],
+          modifiers: form.modifiers ? form.modifiers.split(",").map(m => m.trim()).filter(Boolean) : [],
           extra_notes: compositeNotes,
           image_url: uploadedImageUrl,
           status: targetStatus
@@ -301,34 +322,28 @@ export default function DashboardPage() {
     }
   };
 
-  const resetForm = () => {
-    setForm(emptyForm());
-    setImageFile(null);
-    setImagePreviewUrl(null);
-    setIcdSearch("");
-    setError(null);
-    setStatusMessage(null);
+  const updateField = useCallback((field: keyof ClaimFormState, value: string) => setForm(p => ({ ...p, [field]: value })), []);
+  
+  const selectIcdCode = (opt: { code: string; description: string }) => {
+    updateField("icd10Code", opt.code);
+    setIcdSearch(`${opt.code} — ${opt.description}`);
+    setIcdDropdownOpen(false);
   };
 
-  const updateField = useCallback((field: keyof ClaimFormState, value: string) => setForm(p => ({ ...p, [field]: value })), []);
-  const clearImage = () => { setImagePreviewUrl(null); setImageFile(null); };
-  const selectIcdCode = (opt: any) => { updateField("icd10Code", opt.code); setIcdSearch(`${opt.code} — ${opt.description}`); setIcdDropdownOpen(false); };
   const toggleModifierCode = (c: string) => {
     const cur = form.modifiers ? form.modifiers.split(",").map(m => m.trim()).filter(Boolean) : [];
     const upd = cur.includes(c) ? cur.filter(x => x !== c) : [...cur, c];
     updateField("modifiers", upd.join(", "));
   };
 
-  const bmiCategory = (bmi: string): { label: string; color: string } => {
-    const val = parseFloat(bmi);
+  const bmiMeta = useMemo(() => {
+    const val = parseFloat(form.bmiInfo);
     if (!val) return { label: "", color: "text-slate-500" };
     if (val < 18.5) return { label: "Underweight", color: "text-blue-400" };
     if (val < 25) return { label: "Normal", color: "text-teal-400" };
     if (val < 30) return { label: "Overweight", color: "text-amber-400" };
     return { label: "Obese", color: "text-red-400" };
-  };
-
-  const bmiMeta = bmiCategory(form.bmiInfo);
+  }, [form.bmiInfo]);
 
   return (
     <div className="relative min-h-screen bg-[#0b0f14] text-slate-100 flex flex-col">
@@ -348,9 +363,7 @@ export default function DashboardPage() {
         </header>
 
         <div className="grid grid-cols-1 xl:grid-cols-5 gap-6 flex-1">
-          {/* Main Form Entry */}
           <section className="xl:col-span-3 rounded-sm border border-slate-800 bg-slate-900/40 p-5 space-y-4">
-
             {medicalAidWarnings.length > 0 && (
               <div className="rounded-sm border border-amber-500/30 bg-amber-950/20 p-3 space-y-1">
                 {medicalAidWarnings.map((w, idx) => (
@@ -362,7 +375,6 @@ export default function DashboardPage() {
             {error && <div className="rounded-sm border border-red-500/40 bg-red-950/30 px-3 py-2 text-xs text-red-200">{error}</div>}
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              {/* Image Input Box */}
               <div>
                 {!imagePreviewUrl ? (
                   <div onClick={() => fileInputRef.current?.click()} className="flex min-h-[460px] cursor-pointer flex-col items-center justify-center rounded-sm border-2 border-dashed border-slate-700 bg-slate-950/40 hover:border-teal-500/40 transition p-4">
@@ -371,14 +383,13 @@ export default function DashboardPage() {
                   </div>
                 ) : (
                   <div className="relative border border-slate-800 rounded-sm bg-slate-950 p-2">
-                    <img src={imagePreviewUrl} className="max-h-[460px] w-full object-contain mx-auto" />
+                    <img src={imagePreviewUrl} className="max-h-[460px] w-full object-contain mx-auto" alt="Billing Sheet" />
                     <button onClick={clearImage} className="absolute top-4 right-4 bg-red-600 px-2 py-1 text-[10px] font-bold uppercase rounded-sm">Remove</button>
                   </div>
                 )}
                 <input ref={fileInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleFileChange} />
               </div>
 
-              {/* Data Fields */}
               <form onSubmit={e => e.preventDefault()} className="space-y-3">
                 <div className="grid grid-cols-2 gap-3">
                   <div>
@@ -415,11 +426,11 @@ export default function DashboardPage() {
                 <div ref={icdSearchRef} className="relative">
                   <label className={labelClassName}>ICD-10 Diagnostic Search</label>
                   <input type="text" value={icdSearch} onFocus={() => setIcdDropdownOpen(true)} onChange={e => setIcdSearch(e.target.value)} className={inputClassName} placeholder="Search diagnostic classifications..." />
-                  {icdDropdownOpen && (
+                  {icdDropdownOpen && filteredIcdCodes.length > 0 && (
                     <ul className="absolute z-20 mt-1 max-h-36 w-full overflow-y-auto bg-slate-950 border border-slate-800 rounded-sm divide-y divide-slate-900 shadow-2xl">
-                      {ALL_ICD10_CODES.slice(0, 10).map((i: any) => (
-                        <li key={i.ICD10CODE} onClick={() => selectIcdCode({ code: i.ICD10CODE, description: i["DESCRIPTION\r"] })} className="px-3 py-2 text-xs hover:bg-slate-900 cursor-pointer flex justify-between">
-                          <span className="text-teal-400 font-mono font-bold">{i.ICD10CODE}</span>
+                      {filteredIcdCodes.map((i) => (
+                        <li key={i.ICD10CODE} onClick={() => selectIcdCode({ code: i.ICD10CODE, description: i["DESCRIPTION\r"] })} className="px-3 py-2 text-xs hover:bg-slate-900 cursor-pointer flex justify-between gap-2">
+                          <span className="text-teal-400 font-mono font-bold whitespace-nowrap">{i.ICD10CODE}</span>
                           <span className="text-slate-400 truncate max-w-xs">{i["DESCRIPTION\r"]}</span>
                         </li>
                       ))}
@@ -442,31 +453,14 @@ export default function DashboardPage() {
                   </div>
                 </div>
 
-                {/* Weight / Height / BMI Block */}
                 <div className="grid grid-cols-3 gap-2 border-t border-slate-800/80 pt-2">
                   <div>
                     <label className={labelClassName}>Weight (kg)</label>
-                    <input
-                      type="number"
-                      min="0"
-                      step="0.1"
-                      value={form.weight}
-                      onChange={e => updateField("weight", e.target.value)}
-                      className={inputClassName}
-                      placeholder="75"
-                    />
+                    <input type="number" min="0" step="0.1" value={form.weight} onChange={e => updateField("weight", e.target.value)} className={inputClassName} placeholder="75" />
                   </div>
                   <div>
                     <label className={labelClassName}>Height (cm)</label>
-                    <input
-                      type="number"
-                      min="0"
-                      step="0.1"
-                      value={form.height}
-                      onChange={e => updateField("height", e.target.value)}
-                      className={inputClassName}
-                      placeholder="175"
-                    />
+                    <input type="number" min="0" step="0.1" value={form.height} onChange={e => updateField("height", e.target.value)} className={inputClassName} placeholder="175" />
                   </div>
                   <div>
                     <label className={labelClassName}>BMI</label>
@@ -512,7 +506,6 @@ export default function DashboardPage() {
             </div>
           </section>
 
-          {/* Analytics + Chat */}
           <aside className="xl:col-span-2 flex flex-col gap-4">
             <div className="rounded-sm border border-slate-800 bg-slate-900/40 p-4">
               <h3 className="text-xs font-bold uppercase tracking-wider text-slate-300">Live Practice Financial Pack</h3>
