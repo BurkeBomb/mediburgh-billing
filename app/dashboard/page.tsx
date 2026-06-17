@@ -161,6 +161,7 @@ export default function DashboardPage() {
     return () => document.removeEventListener("mousedown", handleOutsideDropdownClicks);
   }, []);
 
+  // ── REAL-TIME DATABASE SYNCHRONIZATION PIPELINE ──
   useEffect(() => {
     let channel: any;
 
@@ -192,6 +193,7 @@ export default function DashboardPage() {
     };
   }, []);
 
+  // Live Metrics Calculator View
   useEffect(() => {
     async function fetchLiveMetrics() {
       try {
@@ -231,7 +233,7 @@ export default function DashboardPage() {
           setLiveTickets(ticketData as TicketThread[]);
         }
       } catch (err) {
-        console.error("Failed to stream metrics matrix layout:", err);
+        console.error("Failed to stream metrics layout:", err);
       }
     }
     fetchLiveMetrics();
@@ -437,7 +439,6 @@ export default function DashboardPage() {
       const isoStartTimestamp = form.theatreStartTime ? new Date(`${form.theatreDate}T${form.theatreStartTime}`).toISOString() : null;
       const isoEndTimestamp = form.theatreEndTime ? new Date(`${form.theatreDate}T${form.theatreEndTime}`).toISOString() : null;
 
-      // FIX: Standardize the composite parameters injection text exactly for regex extraction down inside the admin queue
       const compositeNotes = `[Patient: ${form.patientName.trim()} ${form.patientSurname.trim()}] [Procedure Code: ${form.procedureCode.trim() || "None Assigned"}] ${form.extraNotes.trim()}`.trim();
 
       const { data: newClaimRecord, error: claimError } = await supabase
