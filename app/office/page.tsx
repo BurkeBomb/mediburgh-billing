@@ -38,13 +38,9 @@ interface AuditLogRecord {
   timestamp: string;
 }
 
-const cardClassName =
-  "rounded-sm border border-slate-800/90 bg-slate-900/40 shadow-[0_16px_48px_rgba(0,0,0,0.35)] backdrop-blur-sm";
+const cardClassName = "rounded-sm border border-slate-800/90 bg-slate-900/40 shadow-[0_16px_48px_rgba(0,0,0,0.35)] backdrop-blur-sm";
+const inputClassName = "w-full rounded-sm border border-slate-700/80 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 outline-none transition focus:border-teal-500/70 focus:ring-1 focus:ring-teal-500/40";
 
-const inputClassName =
-  "w-full rounded-sm border border-slate-700/80 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 outline-none transition focus:border-teal-500/70 focus:ring-1 focus:ring-teal-500/40";
-
-// Helper function to extract clean Date and Time signatures from ISO timestamps safely
 function formatTimestampContext(isoString: string | null) {
   if (!isoString) return { date: "—", time: "—" };
   try {
@@ -79,6 +75,9 @@ export default function OfficePortalPage() {
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
+  // Trigger state to auto-update data whenever claims are added in real-time
+  const [queueUpdateTrigger, setQueueUpdateTrigger] = useState(0);
+
   const supabase = createClient();
 
   // 1. Fetch active practitioner profiles
@@ -95,7 +94,7 @@ export default function OfficePortalPage() {
         if (fetchErr) throw fetchErr;
         
         setClients(data || []);
-        if (data && data.length > 0) {
+        if (data && data.length > 0 && !selectedClientId) {
           setSelectedClientId(data[0].id);
         }
       } catch (err: any) {
@@ -113,8 +112,6 @@ export default function OfficePortalPage() {
     if (!selectedClientId) return;
 
     async function fetchClientClaims() {
-      setError(null);
-      setSelectedClaim(null);
       try {
         const { data, error: claimsErr } = await supabase
           .from("claims")
@@ -130,23 +127,46 @@ export default function OfficePortalPage() {
       }
     }
     fetchClientClaims();
+  }, [selectedClientId, queueUpdateTrigger]);
+
+  // 3. Attach real-time database listener to auto-pull fresh entries instantly
+  useEffect(() => {
+    if (!selectedClientId) return;
+
+    const channel = supabase
+      .channel(`office-realtime-queue-${selectedClientId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "claims",
+          filter: `practitioner_id=eq.${selectedClientId}`,
+        },
+        () => {
+          setQueueUpdateTrigger((prev) => prev + 1);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [selectedClientId]);
 
-  // 3. Populate audit trail ledger historical logs
+  // 4. Populate audit trail logs
   useEffect(() => {
     if (!selectedClaim) {
       setAuditLogs([]);
       return;
     }
 
-    const targetClaimId = selectedClaim.id;
-
     async function fetchClaimHistory() {
       try {
         const { data, error: logErr } = await supabase
           .from("audit_logs")
           .select("id, claim_id, action, timestamp")
-          .eq("claim_id", targetClaimId)
+          .eq("claim_id", selectedClaim.id)
           .order("timestamp", { ascending: false });
 
         if (logErr) throw logErr;
@@ -165,7 +185,6 @@ export default function OfficePortalPage() {
     setSuccessMessage(null);
   };
 
-  // 4. Update claim properties
   const handleUpdateClaimState = async () => {
     if (!selectedClaim || updating) return;
 
@@ -208,7 +227,6 @@ export default function OfficePortalPage() {
     }
   };
 
-  // 5. Transmit alert tickets
   const handleCreateTicket = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedClientId || !ticketSubject.trim() || !ticketPreview.trim()) {
@@ -271,11 +289,7 @@ export default function OfficePortalPage() {
               <button type="button" onClick={() => { setCurrentRole("admin"); setError(null); }} className={`rounded-sm px-3 py-1 text-xs font-semibold uppercase tracking-wider transition ${currentRole === "admin" ? "bg-teal-600 text-white border border-teal-400" : "text-slate-500 hover:text-teal-400"}`}>Admin</button>
             </div>
 
-            <button
-              type="button"
-              onClick={handleSignOut}
-              className="rounded-sm border border-red-500/30 bg-red-950/20 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-red-400 transition hover:bg-red-900/30"
-            >
+            <button type="button" onClick={handleSignOut} className="rounded-sm border border-red-500/30 bg-red-950/20 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-red-400 transition hover:bg-red-900/30">
               Sign Out
             </button>
           </div>
@@ -342,7 +356,7 @@ export default function OfficePortalPage() {
             <div className={cardClassName}>
               <div className="border-b border-slate-800/90 px-5 py-3 flex flex-wrap items-center justify-between gap-4">
                 <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-200">
-                  Incoming Queue — {selectedClientDetails ? `Dr ${selectedClientDetails.name} ${selectedClientDetails.surname}` : "Selection Pending"}
+                  Incoming Queue — {selectedClientDetails ? `Dr {selectedClientDetails.name} {selectedClientDetails.surname}` : "Selection Pending"}
                 </h2>
                 <div className="flex flex-wrap gap-1 bg-slate-950/50 p-1 rounded-sm border border-slate-800">
                   {["all", "captured", "billed", "on_hold", "incomplete"].map(st => (
@@ -370,12 +384,15 @@ export default function OfficePortalPage() {
                       filteredClaims.map(claim => {
                         const startParsed = formatTimestampContext(claim.theatre_start_time);
                         const endParsed = formatTimestampContext(claim.theatre_end_time);
+                        
+                        // Refactored regex parsers to cleanly capture data fields independent of note spaces
+                        const patientNameExtracted = claim.extra_notes?.match(/\[Patient:\s*([^\]]+)\]/)?.[1] || "Unassigned Patient";
                         const procedureCodeExtracted = claim.extra_notes?.match(/\[Procedure Code:\s*([^\]]+)\]/)?.[1] || "";
 
                         return (
                           <tr key={claim.id} onClick={() => handleSelectClaim(claim)} className={`cursor-pointer transition hover:bg-slate-950/20 ${selectedClaim?.id === claim.id ? "bg-slate-950/40" : ""}`}>
                             <td className="px-4 py-3.5">
-                              <p className="font-medium text-slate-200">{claim.extra_notes?.match(/\[Patient:\s*([^\]]+)\]/)?.[1] || "Unspecified Patient"}</p>
+                              <p className="font-medium text-slate-200">{patientNameExtracted}</p>
                               <div className="text-slate-400 mt-0.5 max-w-xs truncate flex flex-col gap-0.5">
                                 <span className="truncate">{claim.procedure_description}</span>
                                 {procedureCodeExtracted && (
@@ -433,7 +450,6 @@ export default function OfficePortalPage() {
                       </div>
                     </div>
 
-                    {/* Expanded explicit details overview dashboard container blocks */}
                     <div className="grid grid-cols-2 gap-x-4 gap-y-3 text-[11px] bg-slate-950/40 p-3 rounded-sm border border-slate-800/60 shadow-inner">
                       <div className="col-span-2">
                         <span className="text-slate-500 uppercase tracking-wide text-[9px] block mb-0.5">Procedure Description</span>

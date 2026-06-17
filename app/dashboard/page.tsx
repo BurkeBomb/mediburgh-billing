@@ -141,7 +141,6 @@ export default function DashboardPage() {
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
-  // Trigger state incrementer used to cleanly force a data reload on live websocket changes
   const [realtimeTrigger, setRealtimeTrigger] = useState(0);
 
   const isPremiumUser = true;
@@ -162,7 +161,6 @@ export default function DashboardPage() {
     return () => document.removeEventListener("mousedown", handleOutsideDropdownClicks);
   }, []);
 
-  // ── REAL-TIME DATABASE SYNCHRONIZATION PIPELINE ──
   useEffect(() => {
     let channel: any;
 
@@ -170,7 +168,6 @@ export default function DashboardPage() {
       const { data: authData } = await supabase.auth.getUser();
       if (!authData?.user) return;
 
-      // Subscribe explicitly to updates on the 'claims' table for this practitioner
       channel = supabase
         .channel(`realtime-dashboard-sync-${authData.user.id}`)
         .on(
@@ -182,7 +179,6 @@ export default function DashboardPage() {
             filter: `practitioner_id=eq.${authData.user.id}`,
           },
           () => {
-            // Force state evaluation recalculation immediately upon bureau transaction saves
             setRealtimeTrigger((prev) => prev + 1);
           }
         )
@@ -196,7 +192,6 @@ export default function DashboardPage() {
     };
   }, []);
 
-  // Practice Analytics Engine Pipeline (Runs on user interaction or live backend updates)
   useEffect(() => {
     async function fetchLiveMetrics() {
       try {
@@ -216,8 +211,6 @@ export default function DashboardPage() {
         if (monthClaims) {
           const total = monthClaims.length;
           setTotalClaimsCount(total);
-          
-          // Calculate success and billing totals by including rows marked processed/billed by the office
           setValueBilledTotal(total * 1250);
           
           const successfulCases = monthClaims.filter(
@@ -444,11 +437,8 @@ export default function DashboardPage() {
       const isoStartTimestamp = form.theatreStartTime ? new Date(`${form.theatreDate}T${form.theatreStartTime}`).toISOString() : null;
       const isoEndTimestamp = form.theatreEndTime ? new Date(`${form.theatreDate}T${form.theatreEndTime}`).toISOString() : null;
 
-      const compositeNotes = [
-        `[Patient: ${form.patientName} ${form.patientSurname}]`,
-        form.procedureCode ? `[Procedure Code: ${form.procedureCode}]` : null,
-        form.extraNotes
-      ].filter(Boolean).join(" ").trim();
+      // FIX: Standardize the composite parameters injection text exactly for regex extraction down inside the admin queue
+      const compositeNotes = `[Patient: ${form.patientName.trim()} ${form.patientSurname.trim()}] [Procedure Code: ${form.procedureCode.trim() || "None Assigned"}] ${form.extraNotes.trim()}`.trim();
 
       const { data: newClaimRecord, error: claimError } = await supabase
         .from("claims")
