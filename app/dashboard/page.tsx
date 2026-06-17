@@ -6,6 +6,11 @@ import icd10Database from "@/data/ICD10.json";
 
 type ClaimStatus = "captured" | "on_hold" | "billed";
 
+export interface ModifierOption {
+  code: string;
+  label: string;
+}
+
 interface ClaimFormState {
   patientName: string;
   patientSurname: string;
@@ -79,8 +84,51 @@ const calculateBMI = (weightKg: string, heightCm: string): string => {
 
 const ALL_ICD10_CODES = (icd10Database?.Employees?.Employee || []) as IcdCodeItem[];
 
-const labelClassName = "block text-[10px] font-medium uppercase tracking-wider text-slate-400 mb-1";
-const inputClassName = "w-full rounded-sm border border-slate-700/80 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 outline-none focus:border-teal-500/70";
+const PRELOADED_MODIFIERS: ModifierOption[] = [
+  { code: "0151", label: "Pre-anaesthetic assessment" },
+  { code: "0147 + 0011", label: "Emergency" },
+  { code: "0039", label: "Blood Pressure Control" },
+  { code: "0026", label: "One Lung Ventilation" },
+  { code: "0032", label: "Prone Position" },
+  { code: "0034", label: "Head, Neck and Shoulder" },
+  { code: "0038", label: "Blood salvage" },
+  { code: "0042", label: "Extra Corporeal Circulation" },
+  { code: "0043", label: "Patients younger than 1 year or older than 70 years" },
+  { code: "0044", label: "Neonates up to and including 28 days after birth" },
+  { code: "0019", label: "Neonates with a low birthweight less than 2.5kg" },
+  { code: "0018", label: "BMI higher than 35 (Indicate Height & Weight in notes below)" },
+  { code: "5441", label: "Orthopedic Modifier (Allocation 5441)" },
+  { code: "5442", label: "Orthopedic Modifier (Allocation 5442)" },
+  { code: "5443", label: "Orthopedic Modifier (Allocation 5443)" },
+  { code: "5444", label: "Orthopedic Modifier (Allocation 5444)" },
+  { code: "5445", label: "Orthopedic Modifier (Allocation 5445)" },
+  { code: "5448", label: "Orthopedic Modifier (Allocation 5448)" },
+  { code: "0109", label: "Hospital Follow up" },
+  { code: "1204", label: "ICU care" },
+  { code: "0007", label: "TCI" },
+  { code: "1215", label: "A-line" },
+  { code: "1218", label: "CVP" },
+  { code: "1220", label: "Hire fee PCA" },
+  { code: "1221", label: "PCA pump" },
+  { code: "1780", label: "NG tube" },
+  { code: "IV-UNDER-3", label: "Insertion IV line under 3 years" },
+  { code: "IV-ABOVE-3", label: "Insertion IV line above 3 years" },
+  { code: "EYE-BLOCK", label: "Eye Block" },
+  { code: "2800", label: "Plexus Nerve Block" },
+  { code: "2801", label: "Epidural Injection" },
+  { code: "2802", label: "Peripheral Nerve Block" },
+  { code: "2804", label: "Dwelling Nerve Catheter" },
+  { code: "5103 + 0083", label: "Ultrasound" },
+];
+
+const cardClassName =
+  "rounded-sm border border-slate-800/90 bg-slate-900/40 shadow-[0_16px_48px_rgba(0,0,0,0.35)] backdrop-blur-sm";
+
+const inputClassName =
+  "w-full rounded-sm border border-slate-700/80 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 outline-none transition focus:border-teal-500/70 focus:ring-1 focus:ring-teal-500/40";
+
+const labelClassName =
+  "mb-1 block text-[10px] font-medium uppercase tracking-wider text-slate-400";
 
 export default function DashboardPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -369,7 +417,7 @@ export default function DashboardPage() {
         </header>
 
         <div className="grid grid-cols-1 xl:grid-cols-5 gap-6 flex-1">
-          <section className="xl:col-span-3 rounded-sm border border-slate-800 bg-slate-900/40 p-5 space-y-4">
+          <section className={`xl:col-span-3 p-5 space-y-4 ${cardClassName}`}>
             {medicalAidWarnings.length > 0 && (
               <div className="rounded-sm border border-amber-500/30 bg-amber-950/20 p-3 space-y-1">
                 {medicalAidWarnings.map((w, idx) => (
@@ -489,11 +537,19 @@ export default function DashboardPage() {
 
                 <div>
                   <label className={labelClassName}>Modifiers Selector Block</label>
-                  <div className="flex flex-wrap gap-1 bg-slate-950 p-2 rounded-sm border border-slate-800 max-h-24 overflow-y-auto">
-                    {["0151", "0039", "0026", "0032", "5441", "1204"].map(m => {
-                      const isSel = form.modifiers.includes(m);
+                  <div className="flex flex-wrap gap-1 bg-slate-950 p-2 rounded-sm border border-slate-800 max-h-32 overflow-y-auto">
+                    {PRELOADED_MODIFIERS.map(m => {
+                      const isSel = form.modifiers.includes(m.code);
                       return (
-                        <button key={m} type="button" onClick={() => toggleModifierCode(m)} className={`px-2 py-0.5 rounded-sm font-mono text-xs transition ${isSel ? "bg-teal-600 text-white border border-teal-400" : "bg-slate-900 text-slate-500 border border-slate-800"}`}>[{m}]</button>
+                        <button 
+                          key={m.code} 
+                          type="button" 
+                          onClick={() => toggleModifierCode(m.code)} 
+                          title={m.label}
+                          className={`px-2 py-0.5 rounded-sm font-mono text-[11px] transition text-left truncate max-w-full block w-full ${isSel ? "bg-teal-600 text-white border border-teal-400" : "bg-slate-900 text-slate-400 border border-slate-800 hover:text-slate-200"}`}
+                        >
+                          [{m.code}] <span className="opacity-70 font-sans text-[10px] ml-1">{m.label}</span>
+                        </button>
                       );
                     })}
                   </div>
@@ -517,7 +573,7 @@ export default function DashboardPage() {
           </section>
 
           <aside className="xl:col-span-2 flex flex-col gap-4">
-            <div className="rounded-sm border border-slate-800 bg-slate-900/40 p-4">
+            <div className={`p-4 ${cardClassName}`}>
               <h3 className="text-xs font-bold uppercase tracking-wider text-slate-300">Live Practice Financial Pack</h3>
               <div className="grid grid-cols-3 text-center gap-2 mt-3 font-mono text-xs">
                 <div className="bg-slate-950/60 p-2 border border-slate-900">
@@ -535,7 +591,7 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            <div className="rounded-sm border border-slate-800 bg-slate-900/40 flex-1 flex flex-col overflow-hidden max-h-[460px]">
+            <div className={`flex-1 flex flex-col overflow-hidden max-h-[460px] ${cardClassName}`}>
               <div className="border-b border-slate-800 px-4 py-3 bg-slate-950/40 flex justify-between items-center">
                 <div>
                   <h3 className="text-xs font-bold uppercase tracking-wider text-slate-200">Interactive Adjudication Tickets</h3>
