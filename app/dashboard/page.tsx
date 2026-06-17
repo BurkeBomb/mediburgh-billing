@@ -9,6 +9,7 @@ type ClaimStatus = "captured" | "on_hold" | "billed";
 interface ClaimFormState {
   patientName: string;
   patientSurname: string;
+  medicalAid: string;
   procedureDescription: string;
   procedureCode: string;
   icd10Code: string;
@@ -27,11 +28,16 @@ interface TicketThread {
   status: "open" | "closed" | "urgent";
   updated_at: string;
   sender: "billing_team" | "practitioner";
+  medical_aid?: string;
+  error_code?: string;
 }
 
-interface ModifierOption {
-  code: string;
-  label: string;
+interface TicketMessage {
+  id: string;
+  ticket_id: string;
+  message: text;
+  sender_role: "billing_team" | "practitioner";
+  created_at: string;
 }
 
 const getTodayDateString = () => {
@@ -43,6 +49,7 @@ const getTodayDateString = () => {
 const emptyForm = (): ClaimFormState => ({
   patientName: "",
   patientSurname: "",
+  medicalAid: "Discovery Health",
   procedureDescription: "",
   procedureCode: "",
   icd10Code: "",
@@ -55,62 +62,6 @@ const emptyForm = (): ClaimFormState => ({
 });
 
 const ALL_ICD10_CODES = icd10Database.Employees.Employee;
-
-const PRELOADED_MODIFIERS: ModifierOption[] = [
-  { code: "0151", label: "Pre-anaesthetic assessment" },
-  { code: "0147 + 0011", label: "Emergency" },
-  { code: "0039", label: "Blood Pressure Control" },
-  { code: "0026", label: "One Lung Ventilation" },
-  { code: "0032", label: "Prone Position" },
-  { code: "0034", label: "Head, Neck and Shoulder" },
-  { code: "0038", label: "Blood salvage" },
-  { code: "0042", label: "Extra Corporeal Circulation" },
-  { code: "0043", label: "Patients younger than 1 year or older than 70 years" },
-  { code: "0044", label: "Neonates up to and including 28 days after birth" },
-  { code: "0019", label: "Neonates with a low birthweight less than 2.5kg" },
-  { code: "0018", label: "BMI higher than 35 (Indicate Height & Weight in notes below)" },
-  { code: "5441", label: "Orthopedic Modifier (Allocation 5441)" },
-  { code: "5442", label: "Orthopedic Modifier (Allocation 5442)" },
-  { code: "5443", label: "Orthopedic Modifier (Allocation 5443)" },
-  { code: "5444", label: "Orthopedic Modifier (Allocation 5444)" },
-  { code: "5445", label: "Orthopedic Modifier (Allocation 5445)" },
-  { code: "5448", label: "Orthopedic Modifier (Allocation 5448)" },
-  { code: "0109", label: "Hospital Follow up" },
-  { code: "1204", label: "ICU care" },
-  { code: "0007", label: "TCI" },
-  { code: "1215", label: "A-line" },
-  { code: "1218", label: "CVP" },
-  { code: "1220", label: "Hire fee PCA" },
-  { code: "1221", label: "PCA pump" },
-  { code: "1780", label: "NG tube" },
-  { code: "IV-UNDER-3", label: "Insertion IV line under 3 years" },
-  { code: "IV-ABOVE-3", label: "Insertion IV line above 3 years" },
-  { code: "EYE-BLOCK", label: "Eye Block" },
-  { code: "2800", label: "Plexus Nerve Block" },
-  { code: "2801", label: "Epidural Injection" },
-  { code: "2802", label: "Peripheral Nerve Block" },
-  { code: "2804", label: "Dwelling Nerve Catheter" },
-  { code: "5103 + 0083", label: "Ultrasound" },
-];
-
-const cardClassName = "rounded-sm border border-slate-800/90 bg-slate-900/40 shadow-[0_16px_48px_rgba(0,0,0,0.35)] backdrop-blur-sm";
-const inputClassName = "w-full rounded-sm border border-slate-700/80 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 outline-none transition focus:border-teal-500/70 focus:ring-1 focus:ring-teal-500/40";
-const labelClassName = "mb-1 block text-[10px] font-medium uppercase tracking-wider text-slate-400";
-
-function getMonthRangeLabel(date: Date) {
-  const start = new Date(date.getFullYear(), date.getMonth(), 1);
-  const end = new Date(date.getFullYear(), date.getMonth() + 1, 0);
-  const fmt = new Intl.DateTimeFormat("en-ZA", { day: "numeric", month: "short", year: "numeric" });
-  return `${fmt.format(start)} – ${fmt.format(end)}`;
-}
-
-function formatRelativeTime(iso: string) {
-  const diff = Date.now() - new Date(iso).getTime();
-  const hours = Math.floor(diff / (1000 * 60 * 60));
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
-}
 
 export default function DashboardPage() {
   const formRef = useRef<HTMLFormElement>(null);
@@ -135,709 +86,402 @@ export default function DashboardPage() {
   const [totalClaimsCount, setTotalClaimsCount] = useState<number | null>(null);
   const [valueBilledTotal, setValueBilledTotal] = useState<number | null>(null);
   const [practiceSuccessRate, setPracticeSuccessRate] = useState<number | null>(null);
+  
+  // Real-time chat system states
   const [liveTickets, setLiveTickets] = useState<TicketThread[]>([]);
+  const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
+  const [ticketMessages, setTicketMessages] = useState<TicketMessage[]>([]);
+  const [chatReplyInput, setChatReplyInput] = useState("");
 
   const [error, setError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
-
   const [realtimeTrigger, setRealtimeTrigger] = useState(0);
 
-  const isPremiumUser = true;
+  const supabase = createClient();
   const monthRange = useMemo(() => getMonthRangeLabel(new Date()), []);
 
-  const supabase = createClient();
+  // ── SOUTH AFRICAN MEDICAL AID COMPLIANCE ENGINE (RULEBOOK AUTOMATION) ──
+  const medicalAidWarnings = useMemo(() => {
+    const warnings: string[] = [];
+    const codes = form.procedureCode.split(",").map(c => c.trim());
+    const mods = form.modifiers.split(",").map(m => m.trim());
+    
+    if (form.medicalAid === "GEMS" && mods.includes("0147 + 0011") && !form.extraNotes.toLowerCase().includes("emergency")) {
+      warnings.push("GEMS Rulebook Alert: Emergency modifiers require explicit supporting context inside the Extra Notes field.");
+    }
+    if (form.medicalAid === "Discovery Health" && parseFloat(form.bmiInfo) > 35 && !mods.includes("0018")) {
+      warnings.push("Discovery Rulebook Alert: A registered BMI > 35 requires the selection of Modifier 0018.");
+    }
+    if (mods.includes("0043") && form.extraNotes.toLowerCase().indexOf("age") === -1) {
+      warnings.push("Rule 0043 Warning: Patient age validation parameters must be clearly specified within your note layout.");
+    }
+    return warnings;
+  }, [form.medicalAid, form.procedureCode, form.modifiers, form.bmiInfo, form.extraNotes]);
 
   useEffect(() => {
     function handleOutsideDropdownClicks(event: MouseEvent) {
-      if (icdSearchRef.current && !icdSearchRef.current.contains(event.target as Node)) {
-        setIcdDropdownOpen(false);
-      }
-      if (modSearchRef.current && !modSearchRef.current.contains(event.target as Node)) {
-        setModDropdownOpen(false);
-      }
+      if (icdSearchRef.current && !icdSearchRef.current.contains(event.target as Node)) setIcdDropdownOpen(false);
+      if (modSearchRef.current && !modSearchRef.current.contains(event.target as Node)) setModDropdownOpen(false);
     }
     document.addEventListener("mousedown", handleOutsideDropdownClicks);
     return () => document.removeEventListener("mousedown", handleOutsideDropdownClicks);
   }, []);
 
-  // ── REAL-TIME DATABASE SYNCHRONIZATION PIPELINE ──
+  // Real-time update subscriptions
   useEffect(() => {
-    let channel: any;
+    let claimsChannel: any;
+    let ticketsChannel: any;
 
-    async function initializeRealtimeSync() {
+    async function initializeSync() {
       const { data: authData } = await supabase.auth.getUser();
       if (!authData?.user) return;
 
-      channel = supabase
-        .channel(`realtime-dashboard-sync-${authData.user.id}`)
-        .on(
-          "postgres_changes",
-          {
-            event: "UPDATE",
-            schema: "public",
-            table: "claims",
-            filter: `practitioner_id=eq.${authData.user.id}`,
-          },
-          () => {
-            setRealtimeTrigger((prev) => prev + 1);
-          }
-        )
+      claimsChannel = supabase
+        .channel(`cl-sync-${authData.user.id}`)
+        .on("postgres_changes", { event: "UPDATE", schema: "public", table: "claims", filter: `practitioner_id=eq.${authData.user.id}` }, () => setRealtimeTrigger(p => p + 1))
+        .subscribe();
+
+      ticketsChannel = supabase
+        .channel(`tk-sync-${authData.user.id}`)
+        .on("postgres_changes", { event: "*", schema: "public", table: "tickets", filter: `practitioner_id=eq.${authData.user.id}` }, () => setRealtimeTrigger(p => p + 1))
         .subscribe();
     }
-
-    initializeRealtimeSync();
-
+    initializeSync();
     return () => {
-      if (channel) supabase.removeChannel(channel);
+      if (claimsChannel) supabase.removeChannel(claimsChannel);
+      if (ticketsChannel) supabase.removeChannel(ticketsChannel);
     };
   }, []);
 
-  // Live Metrics Calculator View
+  // Fetch metrics and tickets
   useEffect(() => {
     async function fetchLiveMetrics() {
       try {
         const { data: authData } = await supabase.auth.getUser();
         if (!authData?.user) return;
-        
         const currentUserId = authData.user.id;
-        const now = new Date();
-        const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
 
-        const { data: monthClaims } = await supabase
-          .from("claims")
-          .select("status")
-          .eq("practitioner_id", currentUserId)
-          .gte("created_at", firstDayOfMonth);
-
+        const { data: monthClaims } = await supabase.from("claims").select("status").eq("practitioner_id", currentUserId);
         if (monthClaims) {
-          const total = monthClaims.length;
-          setTotalClaimsCount(total);
-          setValueBilledTotal(total * 1250);
-          
-          const successfulCases = monthClaims.filter(
-            (c: { status: string }) => c.status === "captured" || c.status === "billed"
-          ).length;
-          
-          const rate = total > 0 ? Math.round((successfulCases / total) * 100) : 100;
-          setPracticeSuccessRate(rate);
+          setTotalClaimsCount(monthClaims.length);
+          setValueBilledTotal(monthClaims.length * 1250);
+          const successful = monthClaims.filter((c: any) => c.status === "captured" || c.status === "billed").length;
+          setPracticeSuccessRate(monthClaims.length > 0 ? Math.round((successful / monthClaims.length) * 100) : 100);
         }
 
-        const { data: ticketData } = await supabase
-          .from("tickets")
-          .select("id, subject, preview, status, updated_at, sender")
-          .eq("practitioner_id", currentUserId)
-          .order("updated_at", { ascending: false });
-
-        if (ticketData) {
-          setLiveTickets(ticketData as TicketThread[]);
-        }
+        const { data: tk } = await supabase.from("tickets").select("*").eq("practitioner_id", currentUserId).order("updated_at", { ascending: false });
+        if (tk) setLiveTickets(tk as TicketThread[]);
       } catch (err) {
-        console.error("Failed to stream metrics layout:", err);
+        console.error(err);
       }
     }
     fetchLiveMetrics();
   }, [submittedCount, holdCount, realtimeTrigger]);
 
-  const ticketCounts = useMemo(() => {
-    return {
-      open: liveTickets.filter((t) => t.status === "open").length,
-      closed: liveTickets.filter((t) => t.status === "closed").length,
-      urgent: liveTickets.filter((t) => t.status === "urgent").length,
-    };
-  }, [liveTickets]);
-
-  const filteredIcdOptions = useMemo(() => {
-    const q = icdSearch.trim().toLowerCase();
-    const cleanDesc = (descStr: string) => {
-      if (!descStr) return "";
-      return descStr.replace(/\\"/g, "").replace(/\"/g, "").replace(/\r/g, "").replace(/\n/g, "").trim();
-    };
-
-    if (!q) {
-      return ALL_ICD10_CODES.slice(0, 8).map((item) => ({
-        code: item.ICD10CODE || "—",
-        description: cleanDesc(item["DESCRIPTION\r"] || ""),
-      }));
+  // Fetch thread messages on selection
+  useEffect(() => {
+    if (!selectedTicketId) return;
+    async function fetchMessages() {
+      const { data } = await supabase.from("ticket_messages").select("*").eq("ticket_id", selectedTicketId).order("created_at", { ascending: true });
+      if (data) setTicketMessages(data as any[]);
     }
+    fetchMessages();
 
-    return ALL_ICD10_CODES
-      .filter((item) => {
-        const codeMatch = item.ICD10CODE?.toLowerCase().includes(q);
-        const descMatch = item["DESCRIPTION\r"]?.toLowerCase().includes(q);
-        return codeMatch || descMatch;
+    const msgChannel = supabase
+      .channel(`msg-sync-${selectedTicketId}`)
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "ticket_messages", filter: `ticket_id=eq.${selectedTicketId}` }, (payload) => {
+        setTicketMessages(prev => [...prev, payload.new as TicketMessage]);
       })
-      .slice(0, 15)
-      .map((item) => ({
-        code: item.ICD10CODE || "—",
-        description: cleanDesc(item["DESCRIPTION\r"] || ""),
-      }));
-  }, [icdSearch]);
+      .subscribe();
 
-  const filteredModifierOptions = useMemo(() => {
-    const q = modSearch.trim().toLowerCase();
-    if (!q) return PRELOADED_MODIFIERS;
+    return () => { supabase.removeChannel(msgChannel); };
+  }, [selectedTicketId]);
 
-    return PRELOADED_MODIFIERS.filter(
-      (opt) => opt.code.toLowerCase().includes(q) || opt.label.toLowerCase().includes(q)
-    );
-  }, [modSearch]);
-
-  const activeModifiersList = useMemo(() => {
-    return form.modifiers
-      ? form.modifiers.split(",").map((m) => m.trim()).filter((m) => m.length > 0)
-      : [];
-  }, [form.modifiers]);
-
-  const updateField = useCallback((field: keyof ClaimFormState, value: string) => {
-    setForm((prev) => ({ ...prev, [field]: value }));
-  }, []);
-
-  const toggleModifierCode = (code: string) => {
-    const current = form.modifiers
-      ? form.modifiers.split(",").map((m) => m.trim()).filter((m) => m.length > 0)
-      : [];
-    
-    let updated;
-    if (current.includes(code)) {
-      updated = current.filter((item) => item !== code);
-    } else {
-      updated = [...current, code];
-    }
-    updateField("modifiers", updated.join(", "));
-  };
-
-  const clearImage = useCallback(() => {
-    setImagePreviewUrl((prev) => {
-      if (prev) URL.revokeObjectURL(prev);
-      return null;
-    });
-    setImageFile(null);
-    if (fileInputRef.current) fileInputRef.current.value = "";
-  }, []);
-
-  const loadImage = useCallback((file: File) => {
-    if (!file.type.startsWith("image/")) {
-      setError("Please upload a valid image file (PNG, JPG, WEBP, etc.).");
-      return;
-    }
-    setError(null);
-    setImageFile(file);
-    setImagePreviewUrl((prev) => {
-      if (prev) URL.revokeObjectURL(prev);
-      return URL.createObjectURL(file);
-    });
-  }, []);
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) loadImage(file);
-  };
-
-  const handleDragOver = (e: DragEvent<HTMLDivElement>) => {
+  const handleSendChatReply = async (e: React.FormEvent) => {
     e.preventDefault();
-    setIsDragging(true);
-  };
+    if (!chatReplyInput.trim() || !selectedTicketId) return;
 
-  const handleDragLeave = (e: DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    setIsDragging(false);
-  };
+    try {
+      const { data: authData } = await supabase.auth.getUser();
+      if (!authData?.user) return;
 
-  const handleDrop = (e: DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    setIsDragging(false);
-    const file = e.dataTransfer.files?.[0];
-    if (file) loadImage(file);
-  };
-
-  const resetForm = useCallback(() => {
-    setForm(emptyForm());
-    setIcdSearch("");
-    setModSearch("");
-    setIcdDropdownOpen(false);
-    setModDropdownOpen(false);
-    clearImage();
-    setError(null);
-    formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-  }, [clearImage]);
-
-  const selectIcdCode = (option: { code: string; description: string }) => {
-    updateField("icd10Code", option.code);
-    setIcdSearch(`${option.code} — ${option.description}`);
-    setIcdDropdownOpen(false);
-  };
-
-  const validateForm = (): string | null => {
-    if (!imageFile) return "Please upload a hospital sheet image before continuing.";
-    if (!form.patientName.trim()) return "Patient Name is required.";
-    if (!form.patientSurname.trim()) return "Patient Surname is required.";
-    if (!form.procedureDescription.trim()) return "Procedure Description is required.";
-    if (!form.icd10Code.trim()) return "ICD-10 Code is required.";
-    if (!form.theatreDate) return "Theatre Date is required.";
-    if (!form.theatreStartTime) return "Theatre Start Time is required.";
-    if (!form.theatreEndTime) return "Theatre End Time is required.";
-    if (form.theatreEndTime <= form.theatreStartTime) {
-      return "Theatre End Time must be positioned after your Theatre Start Time.";
+      await supabase.from("ticket_messages").insert([
+        { ticket_id: selectedTicketId, sender_id: authData.user.id, sender_role: "practitioner", message: chatReplyInput.trim() }
+      ]);
+      setChatReplyInput("");
+    } catch (err) {
+      console.error(err);
     }
-    return null;
   };
 
   const handlePersistClaim = async (targetStatus: any) => {
     if (batchCompleted || isSaving) return;
-
     if (targetStatus === "captured") {
-      const validationError = validateForm();
-      if (validationError) {
-        setError(validationError);
-        setStatusMessage(null);
-        return;
-      }
-    } else if (targetStatus === "on_hold") {
-      if (!form.patientName.trim() && !form.patientSurname.trim() && !imageFile) {
-        setError("Add at least a patient name, surname or document before placing a claim on hold.");
-        setStatusMessage(null);
-        return;
-      }
+      const errCheck = validateForm();
+      if (errCheck) { setError(errCheck); return; }
     }
 
     setIsSaving(true);
     setError(null);
-    setStatusMessage("Processing submission and securely transferring logs...");
 
     try {
       let uploadedImageUrl = null;
-
       if (imageFile) {
-        const fileExt = imageFile.name.split(".").pop();
-        const secureFileName = `${crypto.randomUUID()}.${fileExt}`;
-        const targetPath = `${secureFileName}`;
-
-        const { error: uploadError } = await supabase.storage
-          .from("claim-attachments")
-          .upload(targetPath, imageFile, { cacheControl: "3600", upsert: false });
-
-        if (uploadError) throw uploadError;
-
-        const { data: publicUrlData } = supabase.storage
-          .from("claim-attachments")
-          .getPublicUrl(targetPath);
-
-        uploadedImageUrl = publicUrlData.publicUrl;
+        const path = `${crypto.randomUUID()}.${imageFile.name.split(".").pop()}`;
+        const { error: upErr } = await supabase.storage.from("claim-attachments").upload(path, imageFile);
+        if (upErr) throw upErr;
+        uploadedImageUrl = supabase.storage.from("claim-attachments").getPublicUrl(path).data.publicUrl;
       }
 
-      const { data: authData, error: authError } = await supabase.auth.getUser();
-      if (authError || !authData.user) {
-        throw new Error("Session verification failed. Please re-authenticate via the portal gateway.");
-      }
-      const currentUserId = authData.user.id;
+      const { data: authData } = await supabase.auth.getUser();
+      const currentUserId = authData!.user.id;
 
-      const cleanedModifiers = form.modifiers
-        ? form.modifiers.split(",").map((m) => m.trim()).filter((m) => m.length > 0)
-        : [];
+      const compositeNotes = `[Patient: ${form.patientName.trim()} ${form.patientSurname.trim()}] [Procedure Code: ${form.procedureCode.trim() || "None assigned"}] [Medical Aid: ${form.medicalAid}] ${form.extraNotes.trim()}`.trim();
 
-      const isoStartTimestamp = form.theatreStartTime ? new Date(`${form.theatreDate}T${form.theatreStartTime}`).toISOString() : null;
-      const isoEndTimestamp = form.theatreEndTime ? new Date(`${form.theatreDate}T${form.theatreEndTime}`).toISOString() : null;
+      const { data: record, error: claimErr } = await supabase.from("claims").insert([
+        {
+          practitioner_id: currentUserId,
+          procedure_description: form.procedureDescription || "Incomplete Case Record",
+          icd10_code: form.icd10Code || null,
+          theatre_start_time: form.theatreStartTime ? new Date(`${form.theatreDate}T${form.theatreStartTime}`).toISOString() : null,
+          theatre_end_time: form.theatreEndTime ? new Date(`${form.theatreDate}T${form.theatreEndTime}`).toISOString() : null,
+          bmi_info: form.bmiInfo ? parseFloat(form.bmiInfo) : null,
+          modifiers: form.modifiers ? form.modifiers.split(",").map(m => m.trim()) : [],
+          extra_notes: compositeNotes,
+          image_url: uploadedImageUrl,
+          status: targetStatus
+        }
+      ]).select().single();
 
-      const compositeNotes = `[Patient: ${form.patientName.trim()} ${form.patientSurname.trim()}] [Procedure Code: ${form.procedureCode.trim() || "None Assigned"}] ${form.extraNotes.trim()}`.trim();
+      if (claimErr) throw claimErr;
 
-      const { data: newClaimRecord, error: claimError } = await supabase
-        .from("claims")
-        .insert([
-          {
-            practitioner_id: currentUserId,
-            procedure_description: form.procedureDescription || "Incomplete — Positioned on Hold",
-            icd10_code: form.icd10Code || null,
-            theatre_start_time: isoStartTimestamp,
-            theatre_end_time: isoEndTimestamp,
-            bmi_info: form.bmiInfo ? parseFloat(form.bmiInfo) || null : null,
-            modifiers: cleanedModifiers,
-            extra_notes: compositeNotes,
-            image_url: uploadedImageUrl,
-            status: targetStatus,
-          },
-        ])
-        .select()
-        .single();
-
-      if (claimError) throw claimError;
-
-      const logActionString = targetStatus === "captured"
-        ? `Claim record generated with initial standard submission capture.`
-        : `Claim pushed to database and flagged with active 'on_hold' trace state.`;
-
-      await supabase
-        .from("audit_logs")
-        .insert([{ claim_id: newClaimRecord.id, user_id: currentUserId, action: logActionString }]);
-
-      if (targetStatus === "captured") {
-        setSubmittedCount((c) => c + 1);
-        setStatusMessage("Claim successfully pushed to backend. Next form initialized.");
-      } else {
-        setHoldCount((c) => c + 1);
-        setStatusMessage("Claim record flagged and securely held inside data tracking view.");
-      }
-
+      await supabase.from("audit_logs").insert([{ claim_id: record.id, user_id: currentUserId, action: "Claim authorized via desktop terminal input grid layer." }]);
+      
+      if (targetStatus === "captured") setSubmittedCount(c => c + 1);
+      else setHoldCount(c => c + 1);
       resetForm();
     } catch (err: any) {
-      console.error("Critical submission error logged:", err);
-      setError(err.message || "An issue disrupted the server communication lane. Data preserved locally.");
-      setStatusMessage(null);
+      setError(err.message || "Pipeline transfer error.");
     } finally {
       setIsSaving(false);
     }
   };
 
-  const handleCompleted = () => {
-    setBatchCompleted(true);
-    setStatusMessage(`Batch processing marked complete. ${submittedCount} claims secured, ${holdCount} trace queues flagged.`);
-    setError(null);
+  const updateField = useCallback((field: keyof ClaimFormState, value: string) => setForm(p => ({ ...p, [field]: value })), []);
+  const clearImage = () => { setImagePreviewUrl(null); setImageFile(null); };
+  const selectIcdCode = (opt: any) => { updateField("icd10Code", opt.code); setIcdSearch(`${opt.code} — ${opt.description}`); setIcdDropdownOpen(false); };
+  const toggleModifierCode = (c: string) => {
+    const cur = form.modifiers ? form.modifiers.split(",").map(m => m.trim()).filter(Boolean) : [];
+    const upd = cur.includes(c) ? cur.filter(x => x !== c) : [...cur, c];
+    updateField("modifiers", upd.join(", "));
   };
-
-  const handleStartNewBatch = () => {
-    setBatchCompleted(false);
-    setSubmittedCount(0);
-    setHoldCount(0);
-    setStatusMessage("New batch interface session opened.");
-    resetForm();
-  };
-
-  const handleSignOut = async () => {
-    await supabase.auth.signOut();
-    window.location.href = "/";
-  };
-
-  const formDisabled = batchCompleted || isSaving;
 
   return (
-    <div className="relative min-h-full flex-1 bg-[#0b0f14] text-slate-100">
-      <div aria-hidden className="pointer-events-none fixed inset-0 bg-[radial-gradient(ellipse_90%_55%_at_50%_-15%,rgba(20,184,166,0.14),transparent)]" />
-      <div aria-hidden className="pointer-events-none fixed inset-0 bg-[linear-gradient(to_bottom,rgba(15,23,42,0.25),transparent_30%,rgba(11,15,20,1))]" />
-
-      <div className="relative mx-auto max-w-[1680px] px-4 py-6 sm:px-6 lg:px-8">
-        <header className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+    <div className="relative min-h-screen bg-[#0b0f14] text-slate-100 flex flex-col">
+      <div aria-hidden className="pointer-events-none fixed inset-0 bg-[radial-gradient(ellipse_90%_55%_at_50%_-15%,rgba(20,184,166,0.12),transparent)]" />
+      
+      <div className="relative mx-auto w-full max-w-[1680px] px-4 py-6 flex-1 flex flex-col gap-6">
+        <header className="flex justify-between items-center border-b border-slate-800 pb-4">
           <div>
-            <p className="text-[11px] font-medium uppercase tracking-[0.35em] text-teal-400/90">Mediburgh Billing</p>
-            <h1 className="mt-1 text-2xl font-semibold tracking-tight text-white sm:text-3xl">Practitioner Dashboard</h1>
-            <p className="mt-1 text-sm text-slate-400">Continuous claims · Practice insights · Billing support</p>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.35em] text-teal-400">Mediburgh ClinTech v2</p>
+            <h1 className="text-2xl font-bold tracking-tight text-white mt-0.5">Practitioner Workspace</h1>
           </div>
-
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="flex items-center gap-2 rounded-sm border border-teal-500/30 bg-slate-900/60 px-4 py-2">
-              <span className="text-[10px] font-medium uppercase tracking-wider text-teal-400/80">Submitted</span>
-              <span className="font-mono text-xl font-semibold tabular-nums text-teal-300">{submittedCount}</span>
-            </div>
-            <div className="flex items-center gap-2 rounded-sm border border-amber-500/30 bg-slate-900/60 px-4 py-2">
-              <span className="text-[10px] font-medium uppercase tracking-wider text-amber-400/80">On Hold</span>
-              <span className="font-mono text-xl font-semibold tabular-nums text-amber-300">{holdCount}</span>
-            </div>
-            
-            <button type="button" onClick={handleSignOut} className="rounded-sm border border-slate-700 bg-slate-800/60 px-4 py-2 text-xs font-medium uppercase tracking-wide text-slate-300 transition hover:bg-slate-800">
-              Sign Out
-            </button>
-
-            {batchCompleted && (
-              <button type="button" onClick={handleStartNewBatch} className="rounded-sm border border-slate-600 bg-slate-800/60 px-4 py-2 text-xs font-medium uppercase tracking-wide text-slate-200 transition hover:border-slate-500 hover:bg-slate-800">
-                Start new batch
-              </button>
-            )}
+          <div className="flex gap-2 font-mono text-xs">
+            <div className="bg-slate-900 border border-slate-800 px-3 py-1.5 text-teal-400">SUBMITTED: {submittedCount}</div>
+            <div className="bg-slate-900 border border-slate-800 px-3 py-1.5 text-amber-400">HELD: {holdCount}</div>
+            <button onClick={() => window.location.href = "/"} className="bg-red-950/40 border border-red-500/30 px-3 text-red-400 font-sans uppercase tracking-wider font-semibold hover:bg-red-900/20 rounded-sm">Exit</button>
           </div>
         </header>
 
-        {error && <div className="mb-4 rounded-sm border border-red-500/40 bg-red-950/30 px-4 py-3 text-sm text-red-200">{error}</div>}
-        {statusMessage && <div className="mb-4 rounded-sm border border-teal-500/30 bg-teal-950/20 px-4 py-3 text-sm text-teal-100">{statusMessage}</div>}
+        <div className="grid grid-cols-1 xl:grid-cols-5 gap-6 flex-1">
+          {/* Main Form Entry */}
+          <section className="xl:col-span-3 rounded-sm border border-slate-800 bg-slate-900/40 p-5 space-y-4">
+            
+            {/* Real-time Rulebook Alerts Bar */}
+            {medicalAidWarnings.length > 0 && (
+              <div className="rounded-sm border border-amber-500/30 bg-amber-950/20 p-3 space-y-1">
+                {medicalAidWarnings.map((w, idx) => (
+                  <p key={idx} className="text-xs font-medium text-amber-300/90 flex gap-2">⚠️ <span>{w}</span></p>
+                ))}
+              </div>
+            )}
 
-        <div className="grid grid-cols-1 gap-6 xl:grid-cols-5 xl:gap-6">
-          <section className={`xl:col-span-3 ${cardClassName}`}>
-            <div className="border-b border-slate-800/90 px-5 py-4">
-              <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-200">Continuous Claim Submission</h2>
-              <p className="mt-0.5 text-xs text-slate-500">Load hospital sheet · Complete details · Accept or hold</p>
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-2">
-              <div className="border-b border-slate-800/90 p-4 lg:border-b-0 lg:border-r lg:border-slate-800/90">
-                <p className="mb-3 text-[10px] font-medium uppercase tracking-wider text-slate-500">Hospital Sheet</p>
-
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              {/* Image Input Box */}
+              <div>
                 {!imagePreviewUrl ? (
-                  <div
-                    role="button"
-                    tabIndex={0}
-                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") fileInputRef.current?.click(); }}
-                    onDragOver={handleDragOver}
-                    onDragLeave={handleDragLeave}
-                    onDrop={handleDrop}
-                    onClick={() => !formDisabled && fileInputRef.current?.click()}
-                    className={`flex min-h-[480px] cursor-pointer flex-col items-center justify-center rounded-sm border-2 border-dashed px-4 py-10 transition ${
-                      isDragging ? "border-teal-400 bg-teal-950/20" : "border-slate-700/80 bg-slate-950/50 hover:border-slate-600 hover:bg-slate-950/70"
-                    } ${formDisabled ? "pointer-events-none opacity-50" : ""}`}
-                  >
-                    <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-sm border border-slate-700 bg-slate-900">
-                      <svg className="h-6 w-6 text-teal-500/80" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M6.827 6.175A2.31 2.31 0 015.186 7.23c-.38.054-.757.112-1.134.175C2.999 7.58 2.25 8.507 2.25 9.574V18a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9.574c0-1.067-.75-1.994-1.802-2.169a41.763 41.763 0 00-1.134-.175 2.31 2.31 0 01-1.64-1.055l-.822-1.316a2.192 2.192 0 00-1.736-1.039 48.774 48.774 0 00-5.232 0 2.192 2.192 0 00-1.736 1.039l-.821 1.316z" />
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 12.75a4.5 4.5 0 11-9 0 4.5 4.5 0 019 0z" />
-                      </svg>
-                    </div>
-                    <p className="text-center text-sm font-medium text-slate-300">Drop photo or click to capture</p>
-                    <p className="mt-1 text-center text-xs text-slate-500">Refer to sheet while entering claim data</p>
+                  <div onClick={() => fileInputRef.current?.click()} className="flex min-h-[460px] cursor-pointer flex-col items-center justify-center rounded-sm border-2 border-dashed border-slate-700 bg-slate-950/40 hover:border-teal-500/40 transition p-4">
+                    <p className="text-sm text-slate-400 font-medium">Capture Hospital Billing Sheet</p>
+                    <p className="text-xs text-slate-600 mt-1">PNG, JPEG, or device camera integration</p>
                   </div>
                 ) : (
-                  <div className="flex min-h-[480px] flex-col">
-                    <div className="mb-2 flex items-center justify-between gap-2">
-                      <p className="truncate text-xs text-slate-400">{imageFile?.name}</p>
-                      {!formDisabled && (
-                        <button type="button" onClick={clearImage} className="shrink-0 text-[10px] font-medium uppercase tracking-wide text-slate-500 transition hover:text-red-400">
-                          Remove
-                        </button>
-                      )}
-                    </div>
-                    <div className="flex-1 overflow-hidden rounded-sm border border-slate-800 bg-slate-950/70">
-                      <img src={imagePreviewUrl} alt="Hospital sheet preview" className="h-full max-h-[520px] w-full object-contain" />
-                    </div>
+                  <div className="relative border border-slate-800 rounded-sm bg-slate-950 p-2">
+                    <img src={imagePreviewUrl} className="max-h-[460px] w-full object-contain mx-auto" />
+                    <button onClick={clearImage} className="absolute top-4 right-4 bg-red-600 px-2 py-1 text-[10px] font-bold uppercase rounded-sm">Remove</button>
                   </div>
                 )}
-
-                <input ref={fileInputRef} type="file" accept="image/*" capture="environment" onChange={handleFileChange} className="hidden" disabled={formDisabled} />
+                <input ref={fileInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleFileChange} />
               </div>
 
-              <div className="flex flex-col">
-                <form ref={formRef} onSubmit={(e) => e.preventDefault()} className={`flex-1 space-y-3 p-4 ${formDisabled ? "pointer-events-none opacity-50" : ""}`}>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label htmlFor="patient-name" className={labelClassName}>Patient Name</label>
-                      <input id="patient-name" type="text" value={form.patientName} onChange={(e) => updateField("patientName", e.target.value)} className={inputClassName} placeholder="John" disabled={formDisabled} />
-                    </div>
-                    <div>
-                      <label htmlFor="patient-surname" className={labelClassName}>Surname</label>
-                      <input id="patient-surname" type="text" value={form.patientSurname} onChange={(e) => updateField("patientSurname", e.target.value)} className={inputClassName} placeholder="Doe" disabled={formDisabled} />
-                    </div>
-                  </div>
-
+              {/* Data Fields Input Sheet */}
+              <form onSubmit={e => e.preventDefault()} className="space-y-3">
+                <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label htmlFor="procedure-description" className={labelClassName}>Procedure Description</label>
-                    <input id="procedure-description" type="text" value={form.procedureDescription} onChange={(e) => updateField("procedureDescription", e.target.value)} className={inputClassName} placeholder="Laparoscopic cholecystectomy" disabled={formDisabled} />
+                    <label className={labelClassName}>Patient Name</label>
+                    <input type="text" value={form.patientName} onChange={e => updateField("patientName", e.target.value)} className={inputClassName} placeholder="First name" />
                   </div>
-
                   <div>
-                    <label htmlFor="procedure-code" className={labelClassName}>Procedure Code</label>
-                    <input id="procedure-code" type="text" value={form.procedureCode} onChange={(e) => updateField("procedureCode", e.target.value)} className={inputClassName} placeholder="e.g. 0012, 5431" disabled={formDisabled} />
-                  </div>
-
-                  <div ref={icdSearchRef} className="relative">
-                    <label htmlFor="icd10-search" className={labelClassName}>ICD-10 Code Search</label>
-                    <input id="icd10-search" type="text" value={icdSearch} onChange={(e) => { setIcdSearch(e.target.value); setIcdDropdownOpen(true); if (!e.target.value.trim()) updateField("icd10Code", ""); }} onFocus={() => setIcdDropdownOpen(true)} className={inputClassName} placeholder="Search code or condition…" disabled={formDisabled} autoComplete="off" />
-                    {form.icd10Code && <p className="mt-1 font-mono text-[11px] text-teal-400/90">Selected: {form.icd10Code}</p>}
-                    {icdDropdownOpen && filteredIcdOptions.length > 0 && (
-                      <ul className="absolute z-20 mt-1 max-h-44 w-full overflow-y-auto rounded-sm border border-slate-700 bg-slate-950 shadow-xl">
-                        {filteredIcdOptions.map((option) => (
-                          <li key={option.code}>
-                            <button type="button" onClick={() => selectIcdCode(option)} className="w-full px-3 py-2 text-left text-xs transition hover:bg-slate-800">
-                              <span className="font-mono font-medium text-teal-400">{option.code}</span>
-                              <span className="ml-2 text-slate-400">{option.description}</span>
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-
-                  <div className="space-y-3 border-t border-slate-800/50 pt-2">
-                    <div>
-                      <label htmlFor="theatre-date" className={labelClassName}>Theatre Date</label>
-                      <input id="theatre-date" type="date" value={form.theatreDate} onChange={(e) => updateField("theatreDate", e.target.value)} className={inputClassName} disabled={formDisabled} />
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <label htmlFor="theatre-start" className={labelClassName}>Theatre Start</label>
-                        <input id="theatre-start" type="time" value={form.theatreStartTime} onChange={(e) => updateField("theatreStartTime", e.target.value)} className={inputClassName} disabled={formDisabled} />
-                      </div>
-                      <div>
-                        <label htmlFor="theatre-end" className={labelClassName}>Theatre End</label>
-                        <input id="theatre-end" type="time" value={form.theatreEndTime} onChange={(e) => updateField("theatreEndTime", e.target.value)} className={inputClassName} disabled={formDisabled} />
-                      </div>
-                    </div>
-                  </div>
-
-                  <div>
-                    <label htmlFor="bmi-info" className={labelClassName}>BMI Info</label>
-                    <input id="bmi-info" type="text" value={form.bmiInfo} onChange={(e) => updateField("bmiInfo", e.target.value)} className={inputClassName} placeholder="28.4" disabled={formDisabled} />
-                  </div>
-
-                  <div ref={modSearchRef} className="relative">
-                    <label htmlFor="modifiers-search" className={labelClassName}>Modifiers Lookup</label>
-                    <input id="modifiers-search" type="text" value={modSearch} onChange={(e) => { setModSearch(e.target.value); setModDropdownOpen(true); }} onFocus={() => setModDropdownOpen(true)} className={inputClassName} placeholder="Type keyword or code..." disabled={formDisabled} autoComplete="off" />
-
-                    {activeModifiersList.length > 0 && (
-                      <div className="mt-2 flex flex-wrap gap-1">
-                        {activeModifiersList.map((mCode) => (
-                          <span key={mCode} className="inline-flex items-center gap-1 rounded-sm border border-teal-500/30 bg-teal-950/40 px-2 py-0.5 text-[11px] font-mono font-medium text-teal-300">
-                            {mCode}
-                            <button type="button" onClick={() => toggleModifierCode(mCode)} className="text-teal-500 hover:text-red-400 font-bold ml-0.5">×</button>
-                          </span>
-                        ))}
-                      </div>
-                    )}
-
-                    {modDropdownOpen && filteredModifierOptions.length > 0 && (
-                      <ul className="absolute z-20 mt-1 max-h-52 w-full overflow-y-auto rounded-sm border border-slate-700 bg-slate-950 shadow-xl divide-y divide-slate-900">
-                        {filteredModifierOptions.map((option) => {
-                          const isSelected = activeModifiersList.includes(option.code);
-                          return (
-                            <li key={option.code}>
-                              <button type="button" onClick={() => toggleModifierCode(option.code)} className={`w-full px-3 py-2 text-left text-xs transition flex items-center justify-between hover:bg-slate-800 ${isSelected ? "bg-slate-900/60" : ""}`}>
-                                <span className="min-w-0 flex-1 pr-2">
-                                  <span className="font-mono font-medium text-teal-400 mr-2">[{option.code}]</span>
-                                  <span className="text-slate-300">{option.label}</span>
-                                </span>
-                                {isSelected && <span className="text-[10px] uppercase font-semibold tracking-wide text-teal-400 shrink-0">Selected</span>}
-                              </button>
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    )}
-                  </div>
-
-                  <div>
-                    <label htmlFor="extra-notes" className={labelClassName}>Extra Notes</label>
-                    <textarea id="extra-notes" rows={2} value={form.extraNotes} onChange={(e) => updateField("extraNotes", e.target.value)} className={`${inputClassName} resize-none`} placeholder="Additional transaction tracking parameters..." disabled={formDisabled} />
-                  </div>
-                </form>
-
-                <div className="border-t border-slate-800/90 p-4">
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                    <button type="button" onClick={() => handlePersistClaim("captured")} disabled={formDisabled} className="rounded-sm border border-teal-500/50 bg-teal-600 px-3 py-2.5 text-[10px] font-semibold uppercase tracking-wide text-white transition hover:bg-teal-500 disabled:opacity-40">
-                      {isSaving ? "Uploading..." : "Accept & Load Next"}
-                    </button>
-                    <button type="button" onClick={() => handlePersistClaim("on_hold")} disabled={formDisabled} className="rounded-sm border border-amber-500/50 bg-amber-600/90 px-3 py-2.5 text-[10px] font-semibold uppercase tracking-wide text-amber-950 transition hover:bg-amber-500 disabled:opacity-40">
-                      Hold for Info
-                    </button>
-                    <button type="button" onClick={handleCompleted} disabled={formDisabled} className="rounded-sm border border-slate-500/60 bg-slate-200 px-3 py-2.5 text-[10px] font-semibold uppercase tracking-wide text-slate-900 transition hover:bg-white disabled:opacity-40">
-                      Completed
-                    </button>
+                    <label className={labelClassName}>Surname</label>
+                    <input type="text" value={form.patientSurname} onChange={e => updateField("patientSurname", e.target.value)} className={inputClassName} placeholder="Surname" />
                   </div>
                 </div>
-              </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className={labelClassName}>Medical Aid Fund</label>
+                    <select value={form.medicalAid} onChange={e => updateField("medicalAid", e.target.value)} className={`${inputClassName} bg-slate-950`}>
+                      <option value="Discovery Health">Discovery Health</option>
+                      <option value="GEMS">GEMS</option>
+                      <option value="Bonitas">Bonitas</option>
+                      <option value="Medscheme Private">Medscheme Private</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className={labelClassName}>Procedure Code / Tariffs</label>
+                    <input type="text" value={form.procedureCode} onChange={e => updateField("procedureCode", e.target.value)} className={inputClassName} placeholder="e.g. 0012, 5432" />
+                  </div>
+                </div>
+
+                <div>
+                  <label className={labelClassName}>Procedure Description</label>
+                  <input type="text" value={form.procedureDescription} onChange={e => updateField("procedureDescription", e.target.value)} className={inputClassName} placeholder="Surgical description..." />
+                </div>
+
+                <div ref={icdSearchRef} className="relative">
+                  <label className={labelClassName}>ICD-10 Diagnostic Search</label>
+                  <input type="text" value={icdSearch} onFocus={() => setIcdDropdownOpen(true)} onChange={e => setIcdSearch(e.target.value)} className={inputClassName} placeholder="Search diagnostic classifications..." />
+                  {icdDropdownOpen && (
+                    <ul className="absolute z-20 mt-1 max-h-36 w-full overflow-y-auto bg-slate-950 border border-slate-800 rounded-sm divide-y divide-slate-900 shadow-2xl">
+                      {ALL_ICD10_CODES.slice(0, 10).map((i: any) => (
+                        <li key={i.ICD10CODE} onClick={() => selectIcdCode({ code: i.ICD10CODE, description: i["DESCRIPTION\r"] })} className="px-3 py-2 text-xs hover:bg-slate-900 cursor-pointer flex justify-between"><span className="text-teal-400 font-mono font-bold">{i.ICD10CODE}</span> <span className="text-slate-400 truncate max-w-xs">{i["DESCRIPTION\r"]}</span></li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-3 gap-2 border-t border-slate-800/80 pt-2">
+                  <div className="col-span-3">
+                    <label className={labelClassName}>Theatre Operations Date</label>
+                    <input type="date" value={form.theatreDate} onChange={e => updateField("theatreDate", e.target.value)} className={inputClassName} />
+                  </div>
+                  <div className="col-span-1">
+                    <label className={labelClassName}>Start Clock</label>
+                    <input type="time" value={form.theatreStartTime} onChange={e => updateField("theatreStartTime", e.target.value)} className={inputClassName} />
+                  </div>
+                  <div className="col-span-1">
+                    <label className={labelClassName}>End Clock</label>
+                    <input type="time" value={form.theatreEndTime} onChange={e => updateField("theatreEndTime", e.target.value)} className={inputClassName} />
+                  </div>
+                  <div className="col-span-1">
+                    <label className={labelClassName}>Patient BMI</label>
+                    <input type="text" value={form.bmiInfo} onChange={e => updateField("bmiInfo", e.target.value)} className={inputClassName} placeholder="24.5" />
+                  </div>
+                </div>
+
+                <div>
+                  <label className={labelClassName}>Modifiers Selector Block</label>
+                  <div className="flex flex-wrap gap-1 bg-slate-950 p-2 rounded-sm border border-slate-800 max-h-24 overflow-y-auto">
+                    {["0151", "0039", "0026", "0032", "5441", "1204"].map(m => {
+                      const isSel = form.modifiers.includes(m);
+                      return (
+                        <button key={m} type="button" onClick={() => toggleModifierCode(m)} className={`px-2 py-0.5 rounded-sm font-mono text-xs transition ${isSel ? "bg-teal-600 text-white border border-teal-400" : "bg-slate-900 text-slate-500 border border-slate-800"}`}>[{m}]</button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div>
+                  <label className={labelClassName}>Extra Diagnostic Notes</label>
+                  <textarea rows={2} value={form.extraNotes} onChange={e => updateField("extraNotes", e.target.value)} className={`${inputClassName} resize-none`} placeholder="Anesthesia notes or system audit details..." />
+                </div>
+              </form>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 border-t border-slate-800 pt-3">
+              <button onClick={() => handlePersistClaim("captured")} className="bg-teal-600 font-semibold py-2.5 text-xs font-sans uppercase tracking-wider rounded-sm hover:bg-teal-500">Transmit Claim Matrix</button>
+              <button onClick={() => handlePersistClaim("on_hold")} className="bg-amber-600 font-semibold py-2.5 text-xs font-sans uppercase tracking-wider text-amber-950 rounded-sm hover:bg-amber-500">Hold Case Token</button>
             </div>
           </section>
 
-          <aside className="flex flex-col gap-6 xl:col-span-2">
-            <div className={cardClassName}>
-              <div className="border-b border-slate-800/90 px-5 py-4">
-                <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-200">Monthly Practice Metrics</h2>
-                <p className="mt-0.5 text-xs text-slate-500">{monthRange}</p>
-              </div>
-              <div className="grid grid-cols-1 gap-px bg-slate-800/50 sm:grid-cols-3">
-                <div className="bg-slate-900/40 px-4 py-5">
-                  <p className="text-[10px] font-medium uppercase tracking-wider text-slate-500">Total Claims</p>
-                  <p className="mt-2 font-mono text-2xl font-semibold tabular-nums text-white">{totalClaimsCount !== null ? totalClaimsCount : "—"}</p>
-                  <p className="mt-1 text-[10px] text-teal-500/80">Live MTD count</p>
+          {/* Interactive Bureau Chat & Analytics Pack */}
+          <aside className="xl:col-span-2 flex flex-col gap-4">
+            <div className="rounded-sm border border-slate-800 bg-slate-900/40 p-4">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-300">Live Practice Financial Pack</h3>
+              <div className="grid grid-cols-3 text-center gap-2 mt-3 font-mono text-xs">
+                <div className="bg-slate-950/60 p-2 border border-slate-900">
+                  <span className="text-slate-500 block text-[9px] uppercase">MTD Volume</span>
+                  <span className="text-lg font-bold text-white block mt-1">{totalClaimsCount ?? "0"}</span>
                 </div>
-                <div className="bg-slate-900/40 px-4 py-5">
-                  <p className="text-[10px] font-medium uppercase tracking-wider text-slate-500">Value Billed</p>
-                  <p className="mt-2 font-mono text-2xl font-semibold tabular-nums text-teal-300">{valueBilledTotal !== null ? `R ${valueBilledTotal.toLocaleString("en-ZA")}` : "—"}</p>
-                  <p className="mt-1 text-[10px] text-slate-600">Est. ZAR Gross</p>
+                <div className="bg-slate-950/60 p-2 border border-slate-900">
+                  <span className="text-slate-500 block text-[9px] uppercase">ZAR Revenue</span>
+                  <span className="text-lg font-bold text-teal-400 block mt-1">R {valueBilledTotal?.toLocaleString() ?? "0"}</span>
                 </div>
-                <div className="bg-slate-900/40 px-4 py-5">
-                  <p className="text-[10px] font-medium uppercase tracking-wider text-slate-500">Success Rate</p>
-                  <p className="mt-2 font-mono text-2xl font-semibold tabular-nums text-white">{practiceSuccessRate !== null ? `${practiceSuccessRate}%` : "—"}</p>
-                  <p className="mt-1 text-[10px] text-slate-600">Processed vs Hold</p>
+                <div className="bg-slate-950/60 p-2 border border-slate-900">
+                  <span className="text-slate-500 block text-[9px] uppercase">Bureau Rate</span>
+                  <span className="text-lg font-bold text-white block mt-1">{practiceSuccessRate ?? "100"}%</span>
                 </div>
               </div>
             </div>
 
-            <div className={`flex flex-1 flex-col ${cardClassName}`}>
-              <div className="border-b border-slate-800/90 px-5 py-4">
-                <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-200">Billing Team Communications</h2>
-                <p className="mt-0.5 text-xs text-slate-500">Tactical ticket lines with your billing team</p>
-              </div>
-
-              <div className="grid grid-cols-3 gap-px border-b border-slate-800/90 bg-slate-800/50">
-                <div className="bg-slate-900/40 px-3 py-3 text-center">
-                  <p className="text-[10px] font-medium uppercase tracking-wider text-slate-500">Open</p>
-                  <p className="mt-1 font-mono text-xl font-semibold tabular-nums text-slate-200">{ticketCounts.open}</p>
-                </div>
-                <div className="bg-slate-900/40 px-3 py-3 text-center">
-                  <p className="text-[10px] font-medium uppercase tracking-wider text-slate-500">Closed</p>
-                  <p className="mt-1 font-mono text-xl font-semibold tabular-nums text-slate-400">{ticketCounts.closed}</p>
-                </div>
-                <div className="bg-slate-900/40 px-3 py-3 text-center">
-                  <p className="text-[10px] font-medium uppercase tracking-wider text-red-400/80">Urgent</p>
-                  <p className="mt-1 font-mono text-xl font-semibold tabular-nums text-red-400">{ticketCounts.urgent}</p>
+            {/* Interactive Chat Pipeline Interface */}
+            <div className="rounded-sm border border-slate-800 bg-slate-900/40 flex-1 flex flex-col overflow-hidden max-h-[460px]">
+              <div className="border-b border-slate-800 px-4 py-3 bg-slate-950/40 flex justify-between items-center">
+                <div>
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-200">Interactive Adjudication Tickets</h3>
+                  <p className="text-[10px] text-slate-500 mt-0.5">Real-time chat resolution with your billing consultants</p>
                 </div>
               </div>
 
-              <ul className="flex-1 divide-y divide-slate-800/60 max-h-[320px] overflow-y-auto">
-                {liveTickets.length === 0 ? (
-                  <p className="p-4 text-xs text-slate-500 italic text-center">No current alerts or tickets from the bureau.</p>
-                ) : (
-                  liveTickets.map((ticket) => (
-                    <li key={ticket.id} className="px-5 py-4 transition hover:bg-slate-950/30">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2">
-                            <span className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${ticket.status === "urgent" ? "bg-red-500" : ticket.status === "open" ? "bg-teal-500" : "bg-slate-600"}`} />
-                            <p className="truncate text-sm font-medium text-slate-200">{ticket.subject}</p>
-                          </div>
-                          <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-slate-500">{ticket.preview}</p>
-                          <p className="mt-2 text-[10px] uppercase tracking-wider text-slate-600">
-                            {ticket.sender === "billing_team" ? "Billing Team" : "You"} · {formatRelativeTime(ticket.updated_at)}
-                          </p>
-                        </div>
-                        <span className={`shrink-0 rounded-sm border px-2 py-0.5 text-[9px] font-medium uppercase tracking-wider ${
-                          ticket.status === "urgent" ? "border-red-500/40 bg-red-950/30 text-red-300" : ticket.status === "open" ? "border-teal-500/30 bg-teal-950/20 text-teal-300" : "border-slate-700 bg-slate-900 text-slate-500"
-                        }`}>{ticket.status}</span>
-                      </div>
+              <div className="flex-1 grid grid-cols-3 overflow-hidden">
+                {/* Tickets Thread List */}
+                <ul className="col-span-1 border-r border-slate-800 divide-y divide-slate-900 max-y-full overflow-y-auto bg-slate-950/20">
+                  {liveTickets.map(t => (
+                    <li key={t.id} onClick={() => setSelectedTicketId(t.id)} className={`p-2.5 cursor-pointer text-[11px] flex flex-col gap-1 hover:bg-slate-900/40 ${selectedTicketId === t.id ? "bg-slate-950 border-l-2 border-teal-500" : ""}`}>
+                      <span className={`font-semibold truncate ${t.status === "urgent" ? "text-red-400" : "text-slate-200"}`}>{t.subject}</span>
+                      <span className="text-slate-500 font-mono text-[9px] uppercase tracking-wide truncate">{t.medical_aid || "General Case"}</span>
                     </li>
-                  ))
-                )}
-              </ul>
+                  ))}
+                </ul>
+
+                {/* Live Converational Window Component */}
+                <div className="col-span-2 flex flex-col overflow-hidden bg-slate-950/40">
+                  {selectedTicketId ? (
+                    <>
+                      <div className="flex-1 p-3 overflow-y-auto space-y-2 text-xs flex flex-col">
+                        {ticketMessages.map(m => {
+                          const isMe = m.sender_role === "practitioner";
+                          return (
+                            <div key={m.id} className={`max-w-[85%] rounded-sm p-2 flex flex-col ${isMe ? "bg-teal-950/40 border border-teal-500/20 text-teal-200 self-end" : "bg-slate-900 border border-slate-800 text-slate-300 self-start"}`}>
+                              <span className="font-sans leading-relaxed">{m.message}</span>
+                              <span className="text-[8px] font-mono text-slate-500 mt-1 self-end">{new Date(m.created_at).toLocaleTimeString("en-ZA", { hour: "2-digit", minute: "2-digit" })}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <form onSubmit={handleSendChatReply} className="border-t border-slate-800 p-2 flex bg-slate-950/80">
+                        <input type="text" value={chatReplyInput} onChange={e => setChatReplyInput(e.target.value)} placeholder="Type chat update..." className="flex-1 bg-transparent px-2 text-xs text-slate-100 outline-none" />
+                        <button type="submit" className="bg-teal-600 px-3 py-1 text-[10px] font-bold uppercase tracking-wider rounded-sm">Send</button>
+                      </form>
+                    </>
+                  ) : (
+                    <div className="flex-1 flex items-center justify-center text-xs text-slate-600 italic p-4 text-center">Select an open billing alert to join the interactive audit thread.</div>
+                  )}
+                </div>
+              </div>
             </div>
           </aside>
         </div>
-
-        {isPremiumUser && (
-          <section className="mt-6">
-            <div className="mb-4 flex items-center gap-3">
-              <div className="h-px flex-1 bg-gradient-to-r from-transparent via-teal-500/30 to-transparent" />
-              <p className="text-[10px] font-medium uppercase tracking-[0.3em] text-teal-400/70">Premium Suite</p>
-              <div className="h-px flex-1 bg-gradient-to-r from-transparent via-teal-500/30 to-transparent" />
-            </div>
-
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              <div className={`group relative overflow-hidden ${cardClassName} p-6 transition hover:border-teal-500/30`}>
-                <div aria-hidden className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,rgba(20,184,166,0.08),transparent_60%)]" />
-                <div className="relative">
-                  <div className="mb-3 flex items-center justify-between">
-                    <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-200">Quotes Setup Tool</h3>
-                    <span className="rounded-sm border border-teal-500/30 bg-teal-950/30 px-2 py-0.5 text-[9px] font-medium uppercase tracking-wider text-teal-400">Premium</span>
-                  </div>
-                  <p className="text-sm leading-relaxed text-slate-400">Configure procedure quote templates, fee schedules, and modifier rules for your practice. Coming soon.</p>
-                  <button type="button" disabled className="mt-5 rounded-sm border border-slate-700 bg-slate-900/60 px-4 py-2 text-[10px] font-medium uppercase tracking-wide text-slate-500">Launch tool</button>
-                </div>
-              </div>
-
-              <div className={`group relative overflow-hidden ${cardClassName} p-6 transition hover:border-teal-500/30`}>
-                <div aria-hidden className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,rgba(20,184,166,0.08),transparent_60%)]" />
-                <div className="relative">
-                  <div className="mb-3 flex items-center justify-between">
-                    <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-200">Monthly Practice Analysis Pack</h3>
-                    <span className="rounded-sm border border-teal-500/30 bg-teal-950/30 px-2 py-0.5 text-[9px] font-medium uppercase tracking-wider text-teal-400">Premium</span>
-                  </div>
-                  <p className="text-sm leading-relaxed text-slate-400">Detailed revenue breakdown, rejection analysis, and benchmarking report for {monthRange.split(" – ")[1] || "this month"}. Coming soon.</p>
-                  <button type="button" disabled className="mt-5 rounded-sm border border-slate-700 bg-slate-900/60 px-4 py-2 text-[10px] font-medium uppercase tracking-wide text-slate-500">View analysis</button>
-                </div>
-              </div>
-            </div>
-          </section>
-        )}
-
-        {batchCompleted && (
-          <div className="mt-6 rounded-sm border border-slate-700/80 bg-slate-900/60 px-5 py-4 text-center">
-            <p className="text-sm font-medium text-slate-200">Batch session closed Packs</p>
-            <p className="mt-1 text-xs text-slate-500">Batch finalized with all entries securely written to the audit log. Start a new batch from the header when ready.</p>
-          </div>
-        )}
       </div>
     </div>
   );
