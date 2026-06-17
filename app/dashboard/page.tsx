@@ -1,10 +1,39 @@
+"use client";
+
+import { DragEvent, useCallback, useMemo, useRef, useState, useEffect } from "react";
+import { createClient } from "@/utils/supabase";
+import icd10Database from "@/data/ICD10.json";
+
+type ClaimStatus = "captured" | "on_hold" | "billed";
+
+interface ClaimFormState {
+  patientName: string;
+  patientSurname: string;
+  medicalAid: string;
+  procedureDescription: string;
+  procedureCode: string;
+  icd10Code: string;
+  theatreDate: string;
+  theatreStartTime: string;
+  theatreEndTime: string;
+  weight: string;
+  height: string;
+  bmiInfo: string;
+  modifiers: string;
+  extraNotes: string;
+}
+
+interface TicketThread {
+  id: string;
+  subject: string;
+  preview: string;
   status: "open" | "closed" | "urgent";
   updated_at: string;
   sender: "billing_team" | "practitioner";
   medical_aid?: string;
   error_code?: string;
 }
- 
+
 interface TicketMessage {
   id: string;
   ticket_id: string;
@@ -12,13 +41,13 @@ interface TicketMessage {
   sender_role: "billing_team" | "practitioner";
   created_at: string;
 }
- 
+
 const getTodayDateString = () => {
   const today = new Date();
   const offset = today.getTimezoneOffset() * 60000;
   return new Date(today.getTime() - offset).toISOString().split("T")[0];
 };
- 
+
 const emptyForm = (): ClaimFormState => ({
   patientName: "",
   patientSurname: "",
@@ -35,71 +64,71 @@ const emptyForm = (): ClaimFormState => ({
   modifiers: "",
   extraNotes: "",
 });
- 
+
 const calculateBMI = (weightKg: string, heightCm: string): string => {
   const w = parseFloat(weightKg);
   const h = parseFloat(heightCm) / 100;
   if (!w || !h || h === 0) return "";
   return (w / (h * h)).toFixed(1);
 };
- 
+
 const getMonthRangeLabel = (date: Date) => {
   return date.toLocaleString("en-ZA", { month: "long", year: "numeric" });
 };
- 
+
 const ALL_ICD10_CODES = icd10Database.Employees.Employee;
- 
+
 const labelClassName = "block text-[10px] font-medium uppercase tracking-wider text-slate-400 mb-1";
 const inputClassName = "w-full rounded-sm border border-slate-700/80 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 outline-none focus:border-teal-500/70";
- 
+
 export default function DashboardPage() {
   const formRef = useRef<HTMLFormElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const icdSearchRef = useRef<HTMLDivElement>(null);
   const modSearchRef = useRef<HTMLDivElement>(null);
- 
+
   const [form, setForm] = useState<ClaimFormState>(emptyForm());
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
- 
+
   const [icdSearch, setIcdSearch] = useState("");
   const [icdDropdownOpen, setIcdDropdownOpen] = useState(false);
   const [modSearch, setModSearch] = useState("");
   const [modDropdownOpen, setModDropdownOpen] = useState(false);
- 
+
   const [submittedCount, setSubmittedCount] = useState(0);
   const [holdCount, setHoldCount] = useState(0);
   const [batchCompleted, setBatchCompleted] = useState(false);
- 
+
   const [totalClaimsCount, setTotalClaimsCount] = useState<number | null>(null);
   const [valueBilledTotal, setValueBilledTotal] = useState<number | null>(null);
   const [practiceSuccessRate, setPracticeSuccessRate] = useState<number | null>(null);
- 
+
   const [liveTickets, setLiveTickets] = useState<TicketThread[]>([]);
   const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
   const [ticketMessages, setTicketMessages] = useState<TicketMessage[]>([]);
   const [chatReplyInput, setChatReplyInput] = useState("");
- 
+
   const [error, setError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [realtimeTrigger, setRealtimeTrigger] = useState(0);
- 
+
   const supabase = createClient();
   const monthRange = useMemo(() => getMonthRangeLabel(new Date()), []);
- 
+
   // Auto-calculate BMI when weight or height changes
   useEffect(() => {
     const bmi = calculateBMI(form.weight, form.height);
     setForm(p => ({ ...p, bmiInfo: bmi }));
   }, [form.weight, form.height]);
- 
+
   const medicalAidWarnings = useMemo(() => {
     const warnings: string[] = [];
     const codes = form.procedureCode.split(",").map(c => c.trim());
     const mods = form.modifiers.split(",").map(m => m.trim());
- 
+
     if (form.medicalAid === "GEMS" && mods.includes("0147 + 0011") && !form.extraNotes.toLowerCase().includes("emergency")) {
       warnings.push("GEMS Rulebook Alert: Emergency modifiers require explicit supporting context inside the Extra Notes field.");
     }
@@ -111,7 +140,7 @@ export default function DashboardPage() {
     }
     return warnings;
   }, [form.medicalAid, form.procedureCode, form.modifiers, form.bmiInfo, form.extraNotes]);
- 
+
   useEffect(() => {
     function handleOutsideDropdownClicks(event: MouseEvent) {
       if (icdSearchRef.current && !icdSearchRef.current.contains(event.target as Node)) setIcdDropdownOpen(false);
@@ -120,20 +149,20 @@ export default function DashboardPage() {
     document.addEventListener("mousedown", handleOutsideDropdownClicks);
     return () => document.removeEventListener("mousedown", handleOutsideDropdownClicks);
   }, []);
- 
+
   useEffect(() => {
     let claimsChannel: any;
     let ticketsChannel: any;
- 
+
     async function initializeSync() {
       const { data: authData } = await supabase.auth.getUser();
       if (!authData?.user) return;
- 
+
       claimsChannel = supabase
         .channel(`cl-sync-${authData.user.id}`)
         .on("postgres_changes", { event: "UPDATE", schema: "public", table: "claims", filter: `practitioner_id=eq.${authData.user.id}` }, () => setRealtimeTrigger(p => p + 1))
         .subscribe();
- 
+
       ticketsChannel = supabase
         .channel(`tk-sync-${authData.user.id}`)
         .on("postgres_changes", { event: "*", schema: "public", table: "tickets", filter: `practitioner_id=eq.${authData.user.id}` }, () => setRealtimeTrigger(p => p + 1))
@@ -145,14 +174,14 @@ export default function DashboardPage() {
       if (ticketsChannel) supabase.removeChannel(ticketsChannel);
     };
   }, []);
- 
+
   useEffect(() => {
     async function fetchLiveMetrics() {
       try {
         const { data: authData } = await supabase.auth.getUser();
         if (!authData?.user) return;
         const currentUserId = authData.user.id;
- 
+
         const { data: monthClaims } = await supabase.from("claims").select("status").eq("practitioner_id", currentUserId);
         if (monthClaims) {
           setTotalClaimsCount(monthClaims.length);
@@ -160,7 +189,7 @@ export default function DashboardPage() {
           const successful = monthClaims.filter((c: any) => c.status === "captured" || c.status === "billed").length;
           setPracticeSuccessRate(monthClaims.length > 0 ? Math.round((successful / monthClaims.length) * 100) : 100);
         }
- 
+
         const { data: tk } = await supabase.from("tickets").select("*").eq("practitioner_id", currentUserId).order("updated_at", { ascending: false });
         if (tk) setLiveTickets(tk as TicketThread[]);
       } catch (err) {
@@ -169,7 +198,7 @@ export default function DashboardPage() {
     }
     fetchLiveMetrics();
   }, [submittedCount, holdCount, realtimeTrigger]);
- 
+
   useEffect(() => {
     if (!selectedTicketId) return;
     async function fetchMessages() {
@@ -177,25 +206,25 @@ export default function DashboardPage() {
       if (data) setTicketMessages(data as any[]);
     }
     fetchMessages();
- 
+
     const msgChannel = supabase
       .channel(`msg-sync-${selectedTicketId}`)
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "ticket_messages", filter: `ticket_id=eq.${selectedTicketId}` }, (payload) => {
         setTicketMessages(prev => [...prev, payload.new as TicketMessage]);
       })
       .subscribe();
- 
+
     return () => { supabase.removeChannel(msgChannel); };
   }, [selectedTicketId]);
- 
+
   const handleSendChatReply = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!chatReplyInput.trim() || !selectedTicketId) return;
- 
+
     try {
       const { data: authData } = await supabase.auth.getUser();
       if (!authData?.user) return;
- 
+
       await supabase.from("ticket_messages").insert([
         { ticket_id: selectedTicketId, sender_id: authData.user.id, sender_role: "practitioner", message: chatReplyInput.trim() }
       ]);
@@ -204,31 +233,31 @@ export default function DashboardPage() {
       console.error(err);
     }
   };
- 
+
   const validateForm = (): string | null => {
     if (!form.patientName.trim()) return "Patient name is required.";
     if (!form.patientSurname.trim()) return "Patient surname is required.";
     if (!form.procedureDescription.trim()) return "Procedure description is required.";
     return null;
   };
- 
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setImageFile(file);
     setImagePreviewUrl(URL.createObjectURL(file));
   };
- 
+
   const handlePersistClaim = async (targetStatus: any) => {
     if (batchCompleted || isSaving) return;
     if (targetStatus === "captured") {
       const errCheck = validateForm();
       if (errCheck) { setError(errCheck); return; }
     }
- 
+
     setIsSaving(true);
     setError(null);
- 
+
     try {
       let uploadedImageUrl = null;
       if (imageFile) {
@@ -237,12 +266,12 @@ export default function DashboardPage() {
         if (upErr) throw upErr;
         uploadedImageUrl = supabase.storage.from("claim-attachments").getPublicUrl(path).data.publicUrl;
       }
- 
+
       const { data: authData } = await supabase.auth.getUser();
       const currentUserId = authData!.user.id;
- 
+
       const compositeNotes = `[Patient: ${form.patientName.trim()} ${form.patientSurname.trim()}] [Procedure Code: ${form.procedureCode.trim() || "None assigned"}] [Medical Aid: ${form.medicalAid}] ${form.extraNotes.trim()}`.trim();
- 
+
       const { data: record, error: claimErr } = await supabase.from("claims").insert([
         {
           practitioner_id: currentUserId,
@@ -257,11 +286,11 @@ export default function DashboardPage() {
           status: targetStatus
         }
       ]).select().single();
- 
+
       if (claimErr) throw claimErr;
- 
+
       await supabase.from("audit_logs").insert([{ claim_id: record.id, user_id: currentUserId, action: "Claim authorized via desktop terminal input grid layer." }]);
- 
+
       if (targetStatus === "captured") setSubmittedCount(c => c + 1);
       else setHoldCount(c => c + 1);
       resetForm();
@@ -271,7 +300,7 @@ export default function DashboardPage() {
       setIsSaving(false);
     }
   };
- 
+
   const resetForm = () => {
     setForm(emptyForm());
     setImageFile(null);
@@ -280,7 +309,7 @@ export default function DashboardPage() {
     setError(null);
     setStatusMessage(null);
   };
- 
+
   const updateField = useCallback((field: keyof ClaimFormState, value: string) => setForm(p => ({ ...p, [field]: value })), []);
   const clearImage = () => { setImagePreviewUrl(null); setImageFile(null); };
   const selectIcdCode = (opt: any) => { updateField("icd10Code", opt.code); setIcdSearch(`${opt.code} — ${opt.description}`); setIcdDropdownOpen(false); };
@@ -289,7 +318,7 @@ export default function DashboardPage() {
     const upd = cur.includes(c) ? cur.filter(x => x !== c) : [...cur, c];
     updateField("modifiers", upd.join(", "));
   };
- 
+
   const bmiCategory = (bmi: string): { label: string; color: string } => {
     const val = parseFloat(bmi);
     if (!val) return { label: "", color: "text-slate-500" };
@@ -298,13 +327,13 @@ export default function DashboardPage() {
     if (val < 30) return { label: "Overweight", color: "text-amber-400" };
     return { label: "Obese", color: "text-red-400" };
   };
- 
+
   const bmiMeta = bmiCategory(form.bmiInfo);
- 
+
   return (
     <div className="relative min-h-screen bg-[#0b0f14] text-slate-100 flex flex-col">
       <div aria-hidden className="pointer-events-none fixed inset-0 bg-[radial-gradient(ellipse_90%_55%_at_50%_-15%,rgba(20,184,166,0.12),transparent)]" />
- 
+
       <div className="relative mx-auto w-full max-w-[1680px] px-4 py-6 flex-1 flex flex-col gap-6">
         <header className="flex justify-between items-center border-b border-slate-800 pb-4">
           <div>
@@ -317,11 +346,11 @@ export default function DashboardPage() {
             <button onClick={() => window.location.href = "/"} className="bg-red-950/40 border border-red-500/30 px-3 text-red-400 font-sans uppercase tracking-wider font-semibold hover:bg-red-900/20 rounded-sm">Exit</button>
           </div>
         </header>
- 
+
         <div className="grid grid-cols-1 xl:grid-cols-5 gap-6 flex-1">
           {/* Main Form Entry */}
           <section className="xl:col-span-3 rounded-sm border border-slate-800 bg-slate-900/40 p-5 space-y-4">
- 
+
             {medicalAidWarnings.length > 0 && (
               <div className="rounded-sm border border-amber-500/30 bg-amber-950/20 p-3 space-y-1">
                 {medicalAidWarnings.map((w, idx) => (
@@ -329,9 +358,9 @@ export default function DashboardPage() {
                 ))}
               </div>
             )}
- 
+
             {error && <div className="rounded-sm border border-red-500/40 bg-red-950/30 px-3 py-2 text-xs text-red-200">{error}</div>}
- 
+
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               {/* Image Input Box */}
               <div>
@@ -348,7 +377,7 @@ export default function DashboardPage() {
                 )}
                 <input ref={fileInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleFileChange} />
               </div>
- 
+
               {/* Data Fields */}
               <form onSubmit={e => e.preventDefault()} className="space-y-3">
                 <div className="grid grid-cols-2 gap-3">
@@ -361,7 +390,7 @@ export default function DashboardPage() {
                     <input type="text" value={form.patientSurname} onChange={e => updateField("patientSurname", e.target.value)} className={inputClassName} placeholder="Surname" />
                   </div>
                 </div>
- 
+
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className={labelClassName}>Medical Aid Fund</label>
@@ -377,12 +406,12 @@ export default function DashboardPage() {
                     <input type="text" value={form.procedureCode} onChange={e => updateField("procedureCode", e.target.value)} className={inputClassName} placeholder="e.g. 0012, 5432" />
                   </div>
                 </div>
- 
+
                 <div>
                   <label className={labelClassName}>Procedure Description</label>
                   <input type="text" value={form.procedureDescription} onChange={e => updateField("procedureDescription", e.target.value)} className={inputClassName} placeholder="Surgical description..." />
                 </div>
- 
+
                 <div ref={icdSearchRef} className="relative">
                   <label className={labelClassName}>ICD-10 Diagnostic Search</label>
                   <input type="text" value={icdSearch} onFocus={() => setIcdDropdownOpen(true)} onChange={e => setIcdSearch(e.target.value)} className={inputClassName} placeholder="Search diagnostic classifications..." />
@@ -397,7 +426,7 @@ export default function DashboardPage() {
                     </ul>
                   )}
                 </div>
- 
+
                 <div className="grid grid-cols-3 gap-2 border-t border-slate-800/80 pt-2">
                   <div className="col-span-3">
                     <label className={labelClassName}>Theatre Operations Date</label>
@@ -412,7 +441,7 @@ export default function DashboardPage() {
                     <input type="time" value={form.theatreEndTime} onChange={e => updateField("theatreEndTime", e.target.value)} className={inputClassName} />
                   </div>
                 </div>
- 
+
                 {/* Weight / Height / BMI Block */}
                 <div className="grid grid-cols-3 gap-2 border-t border-slate-800/80 pt-2">
                   <div>
@@ -453,7 +482,7 @@ export default function DashboardPage() {
                     </div>
                   </div>
                 </div>
- 
+
                 <div>
                   <label className={labelClassName}>Modifiers Selector Block</label>
                   <div className="flex flex-wrap gap-1 bg-slate-950 p-2 rounded-sm border border-slate-800 max-h-24 overflow-y-auto">
@@ -465,14 +494,14 @@ export default function DashboardPage() {
                     })}
                   </div>
                 </div>
- 
+
                 <div>
                   <label className={labelClassName}>Extra Diagnostic Notes</label>
                   <textarea rows={2} value={form.extraNotes} onChange={e => updateField("extraNotes", e.target.value)} className={`${inputClassName} resize-none`} placeholder="Anesthesia notes or system audit details..." />
                 </div>
               </form>
             </div>
- 
+
             <div className="grid grid-cols-2 gap-3 border-t border-slate-800 pt-3">
               <button onClick={() => handlePersistClaim("captured")} disabled={isSaving} className="bg-teal-600 font-semibold py-2.5 text-xs font-sans uppercase tracking-wider rounded-sm hover:bg-teal-500 disabled:opacity-40">
                 {isSaving ? "Transmitting..." : "Transmit Claim Matrix"}
@@ -482,7 +511,7 @@ export default function DashboardPage() {
               </button>
             </div>
           </section>
- 
+
           {/* Analytics + Chat */}
           <aside className="xl:col-span-2 flex flex-col gap-4">
             <div className="rounded-sm border border-slate-800 bg-slate-900/40 p-4">
@@ -502,7 +531,7 @@ export default function DashboardPage() {
                 </div>
               </div>
             </div>
- 
+
             <div className="rounded-sm border border-slate-800 bg-slate-900/40 flex-1 flex flex-col overflow-hidden max-h-[460px]">
               <div className="border-b border-slate-800 px-4 py-3 bg-slate-950/40 flex justify-between items-center">
                 <div>
@@ -510,7 +539,7 @@ export default function DashboardPage() {
                   <p className="text-[10px] text-slate-500 mt-0.5">Real-time chat resolution with your billing consultants</p>
                 </div>
               </div>
- 
+
               <div className="flex-1 grid grid-cols-3 overflow-hidden">
                 <ul className="col-span-1 border-r border-slate-800 divide-y divide-slate-900 overflow-y-auto bg-slate-950/20">
                   {liveTickets.map(t => (
@@ -520,7 +549,7 @@ export default function DashboardPage() {
                     </li>
                   ))}
                 </ul>
- 
+
                 <div className="col-span-2 flex flex-col overflow-hidden bg-slate-950/40">
                   {selectedTicketId ? (
                     <>
@@ -552,3 +581,4 @@ export default function DashboardPage() {
     </div>
   );
 }
+
