@@ -47,6 +47,12 @@ interface TicketMessage {
   created_at: string;
 }
 
+interface ProviderProfile {
+  title_name_surname: string;
+  pr_number: string;
+  specialty: string;
+}
+
 interface IcdCodeItem {
   ICD10CODE?: string;
   "DESCRIPTION\r"?: string;
@@ -61,7 +67,7 @@ const getTodayDateString = () => {
 const emptyForm = (): ClaimFormState => ({
   patientName: "",
   patientSurname: "",
-  billingRate: "Medical aid rates/No Copay, Private, Practice Profile",
+  billingRate: "Practice Profile",
   procedureDescription: "",
   procedureCode: "",
   icd10Code: "",
@@ -111,8 +117,8 @@ const PRELOADED_MODIFIERS: ModifierOption[] = [
   { code: "1220", label: "Hire fee PCA" },
   { code: "1221", label: "PCA pump" },
   { code: "1780", label: "NG tube" },
-  { code: "IV-UNDER-3", label: "Insertion IV line under 3 years. No Fee" },
-  { code: "IV-ABOVE-3", label: "Insertion IV line above 3 years, No Fee" },
+  { code: "IV-UNDER-3", label: "Insertion IV line under 3 years" },
+  { code: "IV-ABOVE-3", label: "Insertion IV line above 3 years" },
   { code: "EYE-BLOCK", label: "Eye Block+15min theatre time" },
   { code: "2800", label: "Plexus Nerve Block" },
   { code: "2801", label: "Epidural Injection" },
@@ -156,6 +162,8 @@ export default function DashboardPage() {
   const [ticketMessages, setTicketMessages] = useState<TicketMessage[]>([]);
   const [chatReplyInput, setChatReplyInput] = useState("");
 
+  const [providerProfile, setProviderProfile] = useState<ProviderProfile | null>(null);
+
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [realtimeTrigger, setRealtimeTrigger] = useState(0);
@@ -184,7 +192,7 @@ export default function DashboardPage() {
     const procedureCodes = form.procedureCode.split(",").map(c => c.trim());
 
     if (mods.includes("0147 + 0011") && !form.extraNotes.toLowerCase().includes("emergency")) {
-      warnings.push("Emergency modifiers require motivation and supporting reports to apply for PMB.");
+      warnings.push("GEMS Rulebook Alert: Emergency modifiers require motivation and supporting reports to apply for PMB.");
     }
     if (parseFloat(form.bmiInfo) > 35 && !mods.includes("0018")) {
       warnings.push("A registered BMI > 35 requires the selection of Modifier 0018.");
@@ -241,6 +249,22 @@ export default function DashboardPage() {
         const { data: authData } = await supabase.auth.getUser();
         if (!authData?.user) return;
         const currentUserId = authData.user.id;
+
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("title_name_surname, pr_number, specialty")
+          .eq("id", currentUserId)
+          .maybeSingle();
+
+        if (profile) {
+          setProviderProfile(profile as ProviderProfile);
+        } else {
+          setProviderProfile({
+            title_name_surname: "Dr X Burke",
+            pr_number: "PR0232610",
+            specialty: "Anaesthesiologist"
+          });
+        }
 
         const { data: monthClaims } = await supabase
           .from("claims")
@@ -449,9 +473,7 @@ export default function DashboardPage() {
       resetForm();
     } catch (err: any) {
       setError(err.message || "Pipeline transfer error.");
-    } finally {
-      setIsSaving(false);
-    }
+    } Platform.select;
   };
 
   const updateField = useCallback((field: keyof ClaimFormState, value: string) => setForm(p => ({ ...p, [field]: value })), []);
@@ -482,10 +504,22 @@ export default function DashboardPage() {
       <div aria-hidden className="pointer-events-none fixed inset-0 bg-[radial-gradient(ellipse_90%_55%_at_50%_-15%,rgba(20,184,166,0.12),transparent)]" />
 
       <div className="relative mx-auto w-full max-w-[1680px] px-4 py-6 flex-1 flex flex-col gap-6">
-        <header className="flex justify-between items-center border-b border-slate-800 pb-4">
+        <header className="flex justify-between items-end border-b border-slate-800 pb-5">
           <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.35em] text-teal-400">Mediburgh ClinTech v2</p>
-            <h1 className="text-2xl font-bold tracking-tight text-white mt-0.5">Practitioner Workspace</h1>
+            <p className="text-xs font-bold uppercase tracking-[0.4em] text-teal-400">MediBurgh</p>
+            <h1 className="text-4xl font-extrabold tracking-tight text-white mt-1 uppercase font-sans">
+              Anaesthetic Archive
+            </h1>
+            {providerProfile && (
+              <p className="text-xs font-mono text-slate-400 mt-2 tracking-wide flex items-center gap-2">
+                <span className="text-teal-500/80">█</span> 
+                {providerProfile.title_name_surname} 
+                <span className="text-slate-600">|</span> 
+                {providerProfile.pr_number} 
+                <span className="text-slate-600">|</span> 
+                <span className="text-slate-300">{providerProfile.specialty}</span>
+              </p>
+            )}
           </div>
           <div className="flex gap-2 font-mono text-xs">
             <div className="bg-slate-900 border border-slate-800 px-3 py-1.5 text-teal-400">SUBMITTED: {submittedCount}</div>
@@ -551,8 +585,8 @@ export default function DashboardPage() {
                   <div>
                     <label className={labelClassName}>Billing Rate Plan Strategy</label>
                     <select value={form.billingRate} onChange={e => updateField("billingRate", e.target.value)} className={`${inputClassName} bg-slate-950`}>
-                      <option value="Medical aid rates, No Copay">Medical aid rates, No Copay</option>
                       <option value="Practice Profile">Practice Profile</option>
+                      <option value="Medical aid rates, No Copay">Medical aid rates, No Copay</option>
                       <option value="International/Private">International/Private</option>
                     </select>
                   </div>
@@ -653,10 +687,10 @@ export default function DashboardPage() {
             </div>
 
             <div className="grid grid-cols-2 gap-3 border-t border-slate-800 pt-3">
-              <button onClick={() => handlePersistClaim("captured")} disabled={isSaving} className="bg-teal-600 font-semibold py-2.5 text-xs font-sans uppercase tracking-wider rounded-sm hover:bg-teal-500 disabled:opacity-40">
-                {isSaving ? "Transmitting..." : "Transmit Claim Matrix"}
+              <button onClick={() => handlePersistClaim("captured")} className="bg-teal-600 font-semibold py-2.5 text-xs font-sans uppercase tracking-wider rounded-sm hover:bg-teal-500">
+                Transmit Claim Matrix
               </button>
-              <button onClick={() => handlePersistClaim("on_hold")} disabled={isSaving} className="bg-amber-600 font-semibold py-2.5 text-xs font-sans uppercase tracking-wider text-amber-950 rounded-sm hover:bg-amber-500 disabled:opacity-40">
+              <button onClick={() => handlePersistClaim("on_hold")} className="bg-amber-600 font-semibold py-2.5 text-xs font-sans uppercase tracking-wider text-amber-950 rounded-sm hover:bg-amber-500">
                 Hold Case Token
               </button>
             </div>
