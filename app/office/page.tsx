@@ -1,110 +1,231 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useCallback, useMemo, useRef, useState, useEffect } from "react";
 import { createClient } from "@/utils/supabase";
+import icd10Database from "@/data/ICD10.json";
 
-type OfficeRole = "worker" | "admin";
-type ClaimStatus = "captured" | "billed" | "incomplete" | "on_hold";
+type ClaimStatus = "captured" | "on_hold" | "billed";
 
-interface ClientProfile { id: string; name: string; surname: string; practice_number: string; specialty: string; email: string; }
-interface ClaimRecord { id: string; practitioner_id: string; account_number: string | null; status: ClaimStatus; image_url: string | null; procedure_description: string; icd10_code: string | null; theatre_start_time: string | null; theatre_end_time: string | null; bmi_info: number | null; modifiers: string[]; extra_notes: string | null; created_at: string; }
-interface TicketThread { id: string; subject: string; preview: string; status: "open" | "closed" | "urgent"; updated_at: string; medical_aid?: string; error_code?: string; }
-interface TicketMessage { id: string; message: string; sender_role: string; created_at: string; }
-
-const cardClassName = "rounded-sm border border-slate-800/90 bg-slate-900/40 shadow-[0_16px_48px_rgba(0,0,0,0.35)] backdrop-blur-sm";
-const inputClassName = "w-full rounded-sm border border-slate-700/80 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 outline-none transition focus:border-teal-500/70";
-
-function formatTimestampContext(isoString: string | null) {
-  if (!isoString) return { date: "—", time: "—" };
-  try {
-    const d = new Date(isoString);
-    return {
-      date: d.toLocaleDateString("en-ZA", { year: "numeric", month: "short", day: "numeric" }),
-      time: d.toLocaleTimeString("en-ZA", { hour: "2-digit", minute: "2-digit", hour12: false })
-    };
-  } catch { return { date: "Invalid", time: "Invalid" }; }
+interface ClaimFormState {
+  patientName: string;
+  patientSurname: string;
+  medicalAid: string;
+  procedureDescription: string;
+  procedureCode: string;
+  icd10Code: string;
+  theatreDate: string;
+  theatreStartTime: string;
+  theatreEndTime: string;
+  weight: string;
+  height: string;
+  bmiInfo: string;
+  modifiers: string;
+  extraNotes: string;
 }
 
-export default function OfficePortalPage() {
-  const [currentRole, setCurrentRole] = useState<OfficeRole>("admin");
-  const [clients, setClients] = useState<ClientProfile[]>([]);
-  const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
-  const [claims, setClaims] = useState<ClaimRecord[]>([]);
-  const [selectedClaim, setSelectedClaim] = useState<ClaimRecord | null>(null);
+interface TicketThread {
+  id: string;
+  subject: string;
+  preview: string;
+  status: "open" | "closed" | "urgent";
+  updated_at: string;
+  sender: "billing_team" | "practitioner";
+  medical_aid?: string;
+  error_code?: string;
+}
 
-  // Live Bureau conversational ticket system states
-  const [activeTickets, setActiveTickets] = useState<TicketThread[]>([]);
+interface TicketMessage {
+  id: string;
+  ticket_id: string;
+  message: string;
+  sender_role: "billing_team" | "practitioner";
+  created_at: string;
+}
+
+interface IcdCodeItem {
+  ICD10CODE: string;
+  "DESCRIPTION\r": string;
+}
+
+const getTodayDateString = () => {
+  const today = new Date();
+  const offset = today.getTimezoneOffset() * 60000;
+  return new Date(today.getTime() - offset).toISOString().split("T")[0];
+};
+
+const emptyForm = (): ClaimFormState => ({
+  patientName: "",
+  patientSurname: "",
+  medicalAid: "Discovery Health",
+  procedureDescription: "",
+  procedureCode: "",
+  icd10Code: "",
+  theatreDate: getTodayDateString(),
+  theatreStartTime: "",
+  theatreEndTime: "",
+  weight: "",
+  height: "",
+  bmiInfo: "",
+  modifiers: "",
+  extraNotes: "",
+});
+
+const calculateBMI = (weightKg: string, heightCm: string): string => {
+  const w = parseFloat(weightKg);
+  const h = parseFloat(heightCm) / 100;
+  if (!w || !h || h === 0) return "";
+  return (w / (h * h)).toFixed(1);
+};
+
+const ALL_ICD10_CODES = icd10Database.Employees.Employee as IcdCodeItem[];
+
+const labelClassName = "block text-[10px] font-medium uppercase tracking-wider text-slate-400 mb-1";
+const inputClassName = "w-full rounded-sm border border-slate-700/80 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 outline-none focus:border-teal-500/70";
+
+export default function DashboardPage() {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const icdSearchRef = useRef<HTMLDivElement>(null);
+
+  const [form, setForm] = useState<ClaimFormState>(emptyForm());
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
+
+  const [icdSearch, setIcdSearch] = useState("");
+  const [icdDropdownOpen, setIcdDropdownOpen] = useState(false);
+
+  const [submittedCount, setSubmittedCount] = useState(0);
+  const [holdCount, setHoldCount] = useState(0);
+
+  const [totalClaimsCount, setTotalClaimsCount] = useState<number | null>(null);
+  const [valueBilledTotal, setValueBilledTotal] = useState<number | null>(null);
+  const [practiceSuccessRate, setPracticeSuccessRate] = useState<number | null>(null);
+
+  const [liveTickets, setLiveTickets] = useState<TicketThread[]>([]);
   const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
   const [ticketMessages, setTicketMessages] = useState<TicketMessage[]>([]);
   const [chatReplyInput, setChatReplyInput] = useState("");
 
-  const [statusFilter, setStatusFilter] = useState<ClaimStatus | "all">("all");
-  const [accountNumberInput, setAccountNumberInput] = useState("");
-  const [targetStatus, setTargetStatus] = useState<ClaimStatus>("billed");
-
-  // New ticket creation metrics fields
-  const [ticketSubject, setTicketSubject] = useState("");
-  const [ticketPreview, setTicketPreview] = useState("");
-  const [ticketMedicalAid, setTicketMedicalAid] = useState("Discovery Health");
-  const [ticketPriority, setTicketPriority] = useState<"open" | "urgent">("open");
-
-  const [loading, setLoading] = useState(false);
-  const [updating, setUpdating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [successMessage, setSuccessMessage] = useState<string | null>(null);
-  const [queueUpdateTrigger, setQueueUpdateTrigger] = useState(0);
+  const [isSaving, setIsSaving] = useState(false);
+  const [realtimeTrigger, setRealtimeTrigger] = useState(0);
 
   const supabase = createClient();
 
+  // Auto-calculate BMI on form metric changes
   useEffect(() => {
-    async function fetchPractitioners() {
-      setLoading(true);
-      try {
-        const { data } = await supabase.from("profiles").select("*").eq("role", "practitioner");
-        if (data) { setClients(data); if (data.length > 0 && !selectedClientId) setSelectedClientId(data[0].id); }
-      } catch (err) { console.error(err); }
-      finally { setLoading(false); }
+    const bmi = calculateBMI(form.weight, form.height);
+    setForm(p => ({ ...p, bmiInfo: bmi }));
+  }, [form.weight, form.height]);
+
+  const filteredIcdCodes = useMemo(() => {
+    if (!icdSearch.trim()) return ALL_ICD10_CODES.slice(0, 10);
+    const query = icdSearch.toLowerCase();
+    return ALL_ICD10_CODES.filter(
+      item =>
+        item.ICD10CODE.toLowerCase().includes(query) ||
+        item["DESCRIPTION\r"].toLowerCase().includes(query)
+    ).slice(0, 10);
+  }, [icdSearch]);
+
+  const medicalAidWarnings = useMemo(() => {
+    const warnings: string[] = [];
+    const mods = form.modifiers.split(",").map(m => m.trim());
+
+    if (form.medicalAid === "GEMS" && mods.includes("0147 + 0011") && !form.extraNotes.toLowerCase().includes("emergency")) {
+      warnings.push("GEMS Rulebook Alert: Emergency modifiers require explicit supporting context inside the Extra Notes field.");
     }
-    fetchPractitioners();
+    if (form.medicalAid === "Discovery Health" && parseFloat(form.bmiInfo) > 35 && !mods.includes("0018")) {
+      warnings.push("Discovery Rulebook Alert: A registered BMI > 35 requires the selection of Modifier 0018.");
+    }
+    if (mods.includes("0043") && form.extraNotes.toLowerCase().indexOf("age") === -1) {
+      warnings.push("Rule 0043 Warning: Patient age validation parameters must be clearly specified within your note layout.");
+    }
+    return warnings;
+  }, [form.medicalAid, form.modifiers, form.bmiInfo, form.extraNotes]);
+
+  useEffect(() => {
+    function handleOutsideDropdownClicks(event: MouseEvent) {
+      if (icdSearchRef.current && !icdSearchRef.current.contains(event.target as Node)) setIcdDropdownOpen(false);
+    }
+    document.addEventListener("mousedown", handleOutsideDropdownClicks);
+    return () => document.removeEventListener("mousedown", handleOutsideDropdownClicks);
   }, []);
 
   useEffect(() => {
-    if (!selectedClientId) return;
-    async function fetchClientClaimsAndTickets() {
-      const { data: cl } = await supabase.from("claims").select("*").eq("practitioner_id", selectedClientId).order("created_at", { ascending: false });
-      if (cl) setClaims(cl);
+    let claimsChannel: any;
+    let ticketsChannel: any;
 
-      const { data: tk } = await supabase.from("tickets").select("*").eq("practitioner_id", selectedClientId).order("updated_at", { ascending: false });
-      if (tk) setActiveTickets(tk);
+    async function initializeSync() {
+      const { data: authData } = await supabase.auth.getUser();
+      if (!authData?.user) return;
+
+      claimsChannel = supabase
+        .channel(`cl-sync-${authData.user.id}`)
+        .on("postgres_changes", { event: "UPDATE", schema: "public", table: "claims", filter: `practitioner_id=eq.${authData.user.id}` }, () => setRealtimeTrigger(p => p + 1))
+        .subscribe();
+
+      ticketsChannel = supabase
+        .channel(`tk-sync-${authData.user.id}`)
+        .on("postgres_changes", { event: "*", schema: "public", table: "tickets", filter: `practitioner_id=eq.${authData.user.id}` }, () => setRealtimeTrigger(p => p + 1))
+        .subscribe();
     }
-    fetchClientClaimsAndTickets();
-  }, [selectedClientId, queueUpdateTrigger]);
+    initializeSync();
+    return () => {
+      if (claimsChannel) supabase.removeChannel(claimsChannel);
+      if (ticketsChannel) supabase.removeChannel(ticketsChannel);
+    };
+  }, [supabase]);
 
-  // Realtime active claim updates listener hook
   useEffect(() => {
-    if (!selectedClientId) return;
-    const channel = supabase.channel(`of-claims-${selectedClientId}`).on("postgres_changes", { event: "*", schema: "public", table: "claims", filter: `practitioner_id=eq.${selectedClientId}` }, () => setQueueUpdateTrigger(p => p + 1)).subscribe();
-    return () => { supabase.removeChannel(channel); };
-  }, [selectedClientId]);
+    async function fetchLiveMetrics() {
+      try {
+        const { data: authData } = await supabase.auth.getUser();
+        if (!authData?.user) return;
+        const currentUserId = authData.user.id;
 
-  // Stream text logs for the conversational messaging frames
+        const { data: monthClaims } = await supabase.from("claims").select("status").eq("practitioner_id", currentUserId);
+        if (monthClaims) {
+          setTotalClaimsCount(monthClaims.length);
+          setValueBilledTotal(monthClaims.length * 1250);
+          const successful = monthClaims.filter((c: any) => c.status === "captured" || c.status === "billed").length;
+          setPracticeSuccessRate(monthClaims.length > 0 ? Math.round((successful / monthClaims.length) * 100) : 100);
+        }
+
+        const { data: tk } = await supabase.from("tickets").select("*").eq("practitioner_id", currentUserId).order("updated_at", { ascending: false });
+        if (tk) setLiveTickets(tk as TicketThread[]);
+      } catch (err) {
+        console.error(err);
+      }
+    }
+    fetchLiveMetrics();
+  }, [submittedCount, holdCount, realtimeTrigger, supabase]);
+
   useEffect(() => {
     if (!selectedTicketId) return;
+    let msgChannel: any;
+
     async function fetchMessages() {
       const { data } = await supabase.from("ticket_messages").select("*").eq("ticket_id", selectedTicketId).order("created_at", { ascending: true });
       if (data) setTicketMessages(data as any[]);
+
+      msgChannel = supabase
+        .channel(`msg-sync-${selectedTicketId}`)
+        .on("postgres_changes", { 
+          event: "INSERT", 
+          schema: "public", 
+          table: "ticket_messages", 
+          filter: `ticket_id=eq.${selectedTicketId}` 
+        }, (payload: { new: TicketMessage }) => {
+          setTicketMessages(prev => [...prev, payload.new]);
+        })
+        .subscribe();
     }
     fetchMessages();
 
-    const channel = supabase
-      .channel(`of-msg-${selectedTicketId}`)
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "ticket_messages", filter: `ticket_id=eq.${selectedTicketId}` }, (p) => {
-        setTicketMessages(prev => [...prev, p.new as TicketMessage]);
-      })
-      .subscribe();
-
-    return () => { supabase.removeChannel(channel); };
-  }, [selectedTicketId]);
+    return () => { 
+      if (msgChannel) supabase.removeChannel(msgChannel); 
+    };
+  }, [selectedTicketId, supabase]);
 
   const handleSendChatReply = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -112,219 +233,347 @@ export default function OfficePortalPage() {
 
     try {
       const { data: authData } = await supabase.auth.getUser();
+      if (!authData?.user) return;
+
       await supabase.from("ticket_messages").insert([
-        { ticket_id: selectedTicketId, sender_id: authData!.user.id, sender_role: "billing_team", message: chatReplyInput.trim() }
+        { ticket_id: selectedTicketId, sender_id: authData.user.id, sender_role: "practitioner", message: chatReplyInput.trim() }
       ]);
       setChatReplyInput("");
-    } catch (err) { console.error(err); }
+    } catch (err) {
+      console.error(err);
+    }
   };
 
-  const handleUpdateClaimState = async () => {
-    if (!selectedClaim || updating || currentRole !== "admin") return;
-    setUpdating(true);
-    try {
-      const { data: auth } = await supabase.auth.getUser();
-      await supabase.from("claims").update({ account_number: accountNumberInput.trim() || null, status: targetStatus }).eq("id", selectedClaim.id);
-      await supabase.from("audit_logs").insert([{ claim_id: selectedClaim.id, user_id: auth!.user.id, action: `Billed state mutation sync: [${targetStatus}]` }]);
-      setSuccessMessage("Database parameter adjustments synchronized.");
-      setQueueUpdateTrigger(p => p + 1);
-    } catch (err) { console.error(err); }
-    finally { setUpdating(false); }
+  const validateForm = (): string | null => {
+    if (!form.patientName.trim()) return "Patient name is required.";
+    if (!form.patientSurname.trim()) return "Patient surname is required.";
+    if (!form.procedureDescription.trim()) return "Procedure description is required.";
+    return null;
   };
 
-  const handleCreateTicket = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedClientId || !ticketSubject.trim()) return;
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
+    setImageFile(file);
+    setImagePreviewUrl(URL.createObjectURL(file));
+  };
+
+  const clearImage = () => {
+    if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
+    setImagePreviewUrl(null);
+    setImageFile(null);
+  };
+
+  const resetForm = () => {
+    setForm(emptyForm());
+    clearImage();
+    setIcdSearch("");
+    setError(null);
+  };
+
+  const handlePersistClaim = async (targetStatus: ClaimStatus) => {
+    if (isSaving) return;
+    if (targetStatus === "captured") {
+      const errCheck = validateForm();
+      if (errCheck) { setError(errCheck); return; }
+    }
+
+    setIsSaving(true);
+    setError(null);
 
     try {
-      const { data: tkRecord } = await supabase.from("tickets").insert([
-        { practitioner_id: selectedClientId, subject: ticketSubject.trim(), preview: ticketPreview.trim(), status: ticketPriority, sender: "billing_team", medical_aid: ticketMedicalAid }
+      let uploadedImageUrl = null;
+      if (imageFile) {
+        const path = `${crypto.randomUUID()}.${imageFile.name.split(".").pop()}`;
+        const { error: upErr } = await supabase.storage.from("claim-attachments").upload(path, imageFile);
+        if (upErr) throw upErr;
+        uploadedImageUrl = supabase.storage.from("claim-attachments").getPublicUrl(path).data.publicUrl;
+      }
+
+      const { data: authData } = await supabase.auth.getUser();
+      if (!authData?.user) throw new Error("Authentication state lost.");
+      const currentUserId = authData.user.id;
+
+      // Injects weight, height, and BMI metadata accurately into notes string allocation
+      const compositeNotes = `[Patient: ${form.patientName.trim()} ${form.patientSurname.trim()}] [Procedure Code: ${form.procedureCode.trim() || "None assigned"}] [Medical Aid: ${form.medicalAid}] [Weight: ${form.weight || "N/A"}kg] [Height: ${form.height || "N/A"}cm] [BMI: ${form.bmiInfo || "N/A"}] ${form.extraNotes.trim()}`.trim();
+
+      const { data: record, error: claimErr } = await supabase.from("claims").insert([
+        {
+          practitioner_id: currentUserId,
+          procedure_description: form.procedureDescription || "Incomplete Case Record",
+          icd10_code: form.icd10Code || null,
+          theatre_start_time: form.theatreStartTime ? new Date(`${form.theatreDate}T${form.theatreStartTime}`).toISOString() : null,
+          theatre_end_time: form.theatreEndTime ? new Date(`${form.theatreDate}T${form.theatreEndTime}`).toISOString() : null,
+          bmi_info: form.bmiInfo ? parseFloat(form.bmiInfo) : null,
+          modifiers: form.modifiers ? form.modifiers.split(",").map(m => m.trim()).filter(Boolean) : [],
+          extra_notes: compositeNotes,
+          image_url: uploadedImageUrl,
+          status: targetStatus
+        }
       ]).select().single();
 
-      const { data: auth } = await supabase.auth.getUser();
-      await supabase.from("ticket_messages").insert([
-        { ticket_id: tkRecord.id, sender_id: auth!.user.id, sender_role: "billing_team", message: ticketPreview.trim() }
-      ]);
+      if (claimErr) throw claimErr;
 
-      setTicketSubject("");
-      setTicketPreview("");
-      setQueueUpdateTrigger(p => p + 1);
-    } catch (err) { console.error(err); }
+      await supabase.from("audit_logs").insert([{ claim_id: record.id, user_id: currentUserId, action: "Claim authorized via desktop terminal input grid layer." }]);
+
+      if (targetStatus === "captured") setSubmittedCount(c => c + 1);
+      else setHoldCount(c => c + 1);
+      resetForm();
+    } catch (err: any) {
+      setError(err.message || "Pipeline transfer error.");
+    } finally {
+      setIsSaving(false);
+    }
   };
 
-  const filteredClaims = useMemo(() => statusFilter === "all" ? claims : claims.filter(c => c.status === statusFilter), [claims, statusFilter]);
-  const selectedClientDetails = useMemo(() => clients.find(c => c.id === selectedClientId), [clients, selectedClientId]);
+  const updateField = useCallback((field: keyof ClaimFormState, value: string) => setForm(p => ({ ...p, [field]: value })), []);
+  
+  const selectIcdCode = (opt: { code: string; description: string }) => {
+    updateField("icd10Code", opt.code);
+    setIcdSearch(`${opt.code} — ${opt.description}`);
+    setIcdDropdownOpen(false);
+  };
+
+  const toggleModifierCode = (c: string) => {
+    const cur = form.modifiers ? form.modifiers.split(",").map(m => m.trim()).filter(Boolean) : [];
+    const upd = cur.includes(c) ? cur.filter(x => x !== c) : [...cur, c];
+    updateField("modifiers", upd.join(", "));
+  };
+
+  const bmiMeta = useMemo(() => {
+    const val = parseFloat(form.bmiInfo);
+    if (!val) return { label: "", color: "text-slate-500" };
+    if (val < 18.5) return { label: "Underweight", color: "text-blue-400" };
+    if (val < 25) return { label: "Normal", color: "text-teal-400" };
+    if (val < 30) return { label: "Overweight", color: "text-amber-400" };
+    return { label: "Obese", color: "text-red-400" };
+  }, [form.bmiInfo]);
 
   return (
     <div className="relative min-h-screen bg-[#0b0f14] text-slate-100 flex flex-col">
-      <div className="mx-auto w-full max-w-[1680px] px-4 py-6 flex-1 flex flex-col gap-6">
+      <div aria-hidden className="pointer-events-none fixed inset-0 bg-[radial-gradient(ellipse_90%_55%_at_50%_-15%,rgba(20,184,166,0.12),transparent)]" />
+
+      <div className="relative mx-auto w-full max-w-[1680px] px-4 py-6 flex-1 flex flex-col gap-6">
         <header className="flex justify-between items-center border-b border-slate-800 pb-4">
           <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.35em] text-teal-400">Mediburgh Bureau Operations</p>
-            <h1 className="text-2xl font-bold text-white mt-0.5">Office Administration Console</h1>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.35em] text-teal-400">Mediburgh ClinTech v2</p>
+            <h1 className="text-2xl font-bold tracking-tight text-white mt-0.5">Practitioner Workspace</h1>
           </div>
-          <div className="flex items-center gap-2">
-            <button onClick={() => setCurrentRole("admin")} className={`px-3 py-1 text-xs uppercase font-mono font-bold ${currentRole === "admin" ? "bg-teal-600 text-white" : "bg-slate-900 text-slate-500"}`}>Admin Mode</button>
-            <button onClick={() => window.location.href = "/"} className="bg-slate-800 border border-slate-700 px-3 py-1 text-xs uppercase tracking-wide font-medium">Exit</button>
+          <div className="flex gap-2 font-mono text-xs">
+            <div className="bg-slate-900 border border-slate-800 px-3 py-1.5 text-teal-400">SUBMITTED: {submittedCount}</div>
+            <div className="bg-slate-900 border border-slate-800 px-3 py-1.5 text-amber-400">HELD: {holdCount}</div>
+            <button onClick={() => window.location.href = "/"} className="bg-red-950/40 border border-red-500/30 px-3 text-red-400 font-sans uppercase tracking-wider font-semibold hover:bg-red-900/20 rounded-sm">Exit</button>
           </div>
         </header>
 
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 flex-1">
-          {/* Left Panel Registry & Ticket Chat Interface */}
-          <section className="lg:col-span-1 flex flex-col gap-4">
-            <div className={cardClassName}>
-              <div className="border-b border-slate-800 px-4 py-2.5 bg-slate-950/40 font-semibold text-xs uppercase tracking-wider text-slate-300">Active Medical Practices</div>
-              <ul className="divide-y divide-slate-900 max-h-[160px] overflow-y-auto">
-                {clients.map(c => (
-                  <li key={c.id} onClick={() => setSelectedClientId(c.id)} className={`px-4 py-2.5 text-xs cursor-pointer hover:bg-slate-950/30 transition flex flex-col ${selectedClientId === c.id ? "bg-slate-950 border-l-2 border-teal-500" : ""}`}>
-                    <span className="font-medium text-slate-200">Dr {c.name} {c.surname}</span>
-                    <span className="text-[10px] text-slate-500 font-mono mt-0.5">PR: {c.practice_number}</span>
-                  </li>
+        <div className="grid grid-cols-1 xl:grid-cols-5 gap-6 flex-1">
+          <section className="xl:col-span-3 rounded-sm border border-slate-800 bg-slate-900/40 p-5 space-y-4">
+            {medicalAidWarnings.length > 0 && (
+              <div className="rounded-sm border border-amber-500/30 bg-amber-950/20 p-3 space-y-1">
+                {medicalAidWarnings.map((w, idx) => (
+                  <p key={idx} className="text-xs font-medium text-amber-300/90 flex gap-2">⚠️ <span>{w}</span></p>
                 ))}
-              </ul>
+              </div>
+            )}
+
+            {error && <div className="rounded-sm border border-red-500/40 bg-red-950/30 px-3 py-2 text-xs text-red-200">{error}</div>}
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <div>
+                {!imagePreviewUrl ? (
+                  <div onClick={() => fileInputRef.current?.click()} className="flex min-h-[460px] cursor-pointer flex-col items-center justify-center rounded-sm border-2 border-dashed border-slate-700 bg-slate-950/40 hover:border-teal-500/40 transition p-4">
+                    <p className="text-sm text-slate-400 font-medium">Capture Hospital Billing Sheet</p>
+                    <p className="text-xs text-slate-600 mt-1">PNG, JPEG, or device camera integration</p>
+                  </div>
+                ) : (
+                  <div className="relative border border-slate-800 rounded-sm bg-slate-950 p-2">
+                    <img src={imagePreviewUrl} className="max-h-[460px] w-full object-contain mx-auto" alt="Billing Sheet" />
+                    <button onClick={clearImage} className="absolute top-4 right-4 bg-red-600 px-2 py-1 text-[10px] font-bold uppercase rounded-sm">Remove</button>
+                  </div>
+                )}
+                <input ref={fileInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleFileChange} />
+              </div>
+
+              <form onSubmit={e => e.preventDefault()} className="space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className={labelClassName}>Patient Name</label>
+                    <input type="text" value={form.patientName} onChange={e => updateField("patientName", e.target.value)} className={inputClassName} placeholder="First name" />
+                  </div>
+                  <div>
+                    <label className={labelClassName}>Surname</label>
+                    <input type="text" value={form.patientSurname} onChange={e => updateField("patientSurname", e.target.value)} className={inputClassName} placeholder="Surname" />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className={labelClassName}>Medical Aid Fund</label>
+                    <select value={form.medicalAid} onChange={e => updateField("medicalAid", e.target.value)} className={`${inputClassName} bg-slate-950`}>
+                      <option value="Discovery Health">Discovery Health</option>
+                      <option value="GEMS">GEMS</option>
+                      <option value="Bonitas">Bonitas</option>
+                      <option value="Medscheme Private">Medscheme Private</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className={labelClassName}>Procedure Code / Tariffs</label>
+                    <input type="text" value={form.procedureCode} onChange={e => updateField("procedureCode", e.target.value)} className={inputClassName} placeholder="e.g. 0012, 5432" />
+                  </div>
+                </div>
+
+                <div>
+                  <label className={labelClassName}>Procedure Description</label>
+                  <input type="text" value={form.procedureDescription} onChange={e => updateField("procedureDescription", e.target.value)} className={inputClassName} placeholder="Surgical description..." />
+                </div>
+
+                <div ref={icdSearchRef} className="relative">
+                  <label className={labelClassName}>ICD-10 Diagnostic Search</label>
+                  <input type="text" value={icdSearch} onFocus={() => setIcdDropdownOpen(true)} onChange={e => setIcdSearch(e.target.value)} className={inputClassName} placeholder="Search diagnostic classifications..." />
+                  {icdDropdownOpen && filteredIcdCodes.length > 0 && (
+                    <ul className="absolute z-20 mt-1 max-h-36 w-full overflow-y-auto bg-slate-950 border border-slate-800 rounded-sm divide-y divide-slate-900 shadow-2xl">
+                      {filteredIcdCodes.map((i) => (
+                        <li key={i.ICD10CODE} onClick={() => selectIcdCode({ code: i.ICD10CODE, description: i["DESCRIPTION\r"] })} className="px-3 py-2 text-xs hover:bg-slate-900 cursor-pointer flex justify-between gap-2">
+                          <span className="text-teal-400 font-mono font-bold whitespace-nowrap">{i.ICD10CODE}</span>
+                          <span className="text-slate-400 truncate max-w-xs">{i["DESCRIPTION\r"]}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-3 gap-2 border-t border-slate-800/80 pt-2">
+                  <div className="col-span-3">
+                    <label className={labelClassName}>Theatre Operations Date</label>
+                    <input type="date" value={form.theatreDate} onChange={e => updateField("theatreDate", e.target.value)} className={inputClassName} />
+                  </div>
+                  <div className="col-span-1">
+                    <label className={labelClassName}>Start Clock</label>
+                    <input type="time" value={form.theatreStartTime} onChange={e => updateField("theatreStartTime", e.target.value)} className={inputClassName} />
+                  </div>
+                  <div className="col-span-1">
+                    <label className={labelClassName}>End Clock</label>
+                    <input type="time" value={form.theatreEndTime} onChange={e => updateField("theatreEndTime", e.target.value)} className={inputClassName} />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2 border-t border-slate-800/80 pt-2">
+                  <div>
+                    <label className={labelClassName}>Weight (kg)</label>
+                    <input type="number" min="0" step="0.1" value={form.weight} onChange={e => updateField("weight", e.target.value)} className={inputClassName} placeholder="75" />
+                  </div>
+                  <div>
+                    <label className={labelClassName}>Height (cm)</label>
+                    <input type="number" min="0" step="0.1" value={form.height} onChange={e => updateField("height", e.target.value)} className={inputClassName} placeholder="175" />
+                  </div>
+                  <div>
+                    <label className={labelClassName}>BMI</label>
+                    <div className={`${inputClassName} flex flex-col justify-center min-h-[38px]`}>
+                      {form.bmiInfo ? (
+                        <>
+                          <span className={`font-mono font-bold text-sm ${bmiMeta.color}`}>{form.bmiInfo}</span>
+                          <span className={`text-[9px] uppercase tracking-wider ${bmiMeta.color}`}>{bmiMeta.label}</span>
+                        </>
+                      ) : (
+                        <span className="text-slate-600 text-xs">Auto</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <label className={labelClassName}>Modifiers Selector Block</label>
+                  <div className="flex flex-wrap gap-1 bg-slate-950 p-2 rounded-sm border border-slate-800 max-h-24 overflow-y-auto">
+                    {["0151", "0039", "0026", "0032", "5441", "1204"].map(m => {
+                      const isSel = form.modifiers.includes(m);
+                      return (
+                        <button key={m} type="button" onClick={() => toggleModifierCode(m)} className={`px-2 py-0.5 rounded-sm font-mono text-xs transition ${isSel ? "bg-teal-600 text-white border border-teal-400" : "bg-slate-900 text-slate-500 border border-slate-800"}`}>[{m}]</button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div>
+                  <label className={labelClassName}>Extra Diagnostic Notes</label>
+                  <textarea rows={2} value={form.extraNotes} onChange={e => updateField("extraNotes", e.target.value)} className={`${inputClassName} resize-none`} placeholder="Anesthesia notes or system audit details..." />
+                </div>
+              </form>
             </div>
 
-            {/* Live Interactive Tickets Chat console inside Office View */}
-            <div className="rounded-sm border border-slate-800 bg-slate-900/40 flex flex-col h-[340px] overflow-hidden">
-              <div className="border-b border-slate-800 px-4 py-2.5 bg-slate-950/40 font-semibold text-xs uppercase tracking-wider text-slate-300">Live Adjudication Chats</div>
-              <div className="flex-1 flex overflow-hidden">
-                <ul className="w-1/3 border-r border-slate-900 overflow-y-auto divide-y divide-slate-950 text-[10px]">
-                  {activeTickets.map(t => (
-                    <li key={t.id} onClick={() => setSelectedTicketId(t.id)} className={`p-2 cursor-pointer truncate hover:bg-slate-950/40 ${selectedTicketId === t.id ? "bg-slate-950 font-bold text-teal-400" : "text-slate-400"}`}>{t.subject}</li>
+            <div className="grid grid-cols-2 gap-3 border-t border-slate-800 pt-3">
+              <button onClick={() => handlePersistClaim("captured")} disabled={isSaving} className="bg-teal-600 font-semibold py-2.5 text-xs font-sans uppercase tracking-wider rounded-sm hover:bg-teal-500 disabled:opacity-40">
+                {isSaving ? "Transmitting..." : "Transmit Claim Matrix"}
+              </button>
+              <button onClick={() => handlePersistClaim("on_hold")} disabled={isSaving} className="bg-amber-600 font-semibold py-2.5 text-xs font-sans uppercase tracking-wider text-amber-950 rounded-sm hover:bg-amber-500 disabled:opacity-40">
+                Hold Case Token
+              </button>
+            </div>
+          </section>
+
+          <aside className="xl:col-span-2 flex flex-col gap-4">
+            <div className="rounded-sm border border-slate-800 bg-slate-900/40 p-4">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-300">Live Practice Financial Pack</h3>
+              <div className="grid grid-cols-3 text-center gap-2 mt-3 font-mono text-xs">
+                <div className="bg-slate-950/60 p-2 border border-slate-900">
+                  <span className="text-slate-500 block text-[9px] uppercase">MTD Volume</span>
+                  <span className="text-lg font-bold text-white block mt-1">{totalClaimsCount ?? "0"}</span>
+                </div>
+                <div className="bg-slate-950/60 p-2 border border-slate-900">
+                  <span className="text-slate-500 block text-[9px] uppercase">ZAR Revenue</span>
+                  <span className="text-lg font-bold text-teal-400 block mt-1">R {valueBilledTotal?.toLocaleString() ?? "0"}</span>
+                </div>
+                <div className="bg-slate-950/60 p-2 border border-slate-900">
+                  <span className="text-slate-500 block text-[9px] uppercase">Bureau Rate</span>
+                  <span className="text-lg font-bold text-white block mt-1">{practiceSuccessRate ?? "100"}%</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-sm border border-slate-800 bg-slate-900/40 flex-1 flex flex-col overflow-hidden max-h-[460px]">
+              <div className="border-b border-slate-800 px-4 py-3 bg-slate-950/40 flex justify-between items-center">
+                <div>
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-200">Interactive Adjudication Tickets</h3>
+                  <p className="text-[10px] text-slate-500 mt-0.5">Real-time chat resolution with your billing consultants</p>
+                </div>
+              </div>
+
+              <div className="flex-1 grid grid-cols-3 overflow-hidden">
+                <ul className="col-span-1 border-r border-slate-800 divide-y divide-slate-900 overflow-y-auto bg-slate-950/20">
+                  {liveTickets.map(t => (
+                    <li key={t.id} onClick={() => setSelectedTicketId(t.id)} className={`p-2.5 cursor-pointer text-[11px] flex flex-col gap-1 hover:bg-slate-900/40 ${selectedTicketId === t.id ? "bg-slate-950 border-l-2 border-teal-500" : ""}`}>
+                      <span className={`font-semibold truncate ${t.status === "urgent" ? "text-red-400" : "text-slate-200"}`}>{t.subject}</span>
+                      <span className="text-slate-500 font-mono text-[9px] uppercase tracking-wide truncate">{t.medical_aid || "General Case"}</span>
+                    </li>
                   ))}
                 </ul>
-                <div className="w-2/3 flex flex-col bg-slate-950/20 overflow-hidden">
+
+                <div className="col-span-2 flex flex-col overflow-hidden bg-slate-950/40">
                   {selectedTicketId ? (
                     <>
-                      <div className="flex-1 p-2 overflow-y-auto space-y-1.5 text-[11px] flex flex-col">
-                        {ticketMessages.map((m, idx) => {
-                          const isMe = m.sender_role === "billing_team";
+                      <div className="flex-1 p-3 overflow-y-auto space-y-2 text-xs flex flex-col">
+                        {ticketMessages.map(m => {
+                          const isMe = m.sender_role === "practitioner";
                           return (
-                            <div key={idx} className={`max-w-[90%] p-1.5 rounded-sm border ${isMe ? "bg-slate-900 border-slate-800 text-slate-200 self-end" : "bg-teal-950/30 border-teal-900/40 text-teal-300 self-start"}`}>{m.message}</div>
+                            <div key={m.id} className={`max-w-[85%] rounded-sm p-2 flex flex-col ${isMe ? "bg-teal-950/40 border border-teal-500/20 text-teal-200 self-end" : "bg-slate-900 border border-slate-800 text-slate-300 self-start"}`}>
+                              <span className="font-sans leading-relaxed">{m.message}</span>
+                              <span className="text-[8px] font-mono text-slate-500 mt-1 self-end">{new Date(m.created_at).toLocaleTimeString("en-ZA", { hour: "2-digit", minute: "2-digit" })}</span>
+                            </div>
                           );
                         })}
                       </div>
-                      <form onSubmit={handleSendChatReply} className="border-t border-slate-900 p-1 flex bg-slate-950">
-                        <input type="text" value={chatReplyInput} onChange={e => setChatReplyInput(e.target.value)} placeholder="Type chat reply..." className="flex-1 bg-transparent text-[11px] text-slate-200 px-1 outline-none" />
-                        <button type="submit" className="bg-teal-600 text-[9px] uppercase font-bold px-2 rounded-sm">Send</button>
+                      <form onSubmit={handleSendChatReply} className="border-t border-slate-800 p-2 flex bg-slate-950/80">
+                        <input type="text" value={chatReplyInput} onChange={e => setChatReplyInput(e.target.value)} placeholder="Type chat update..." className="flex-1 bg-transparent px-2 text-xs text-slate-100 outline-none" />
+                        <button type="submit" className="bg-teal-600 px-3 py-1 text-[10px] font-bold uppercase tracking-wider rounded-sm">Send</button>
                       </form>
                     </>
                   ) : (
-                    <p className="text-[10px] text-slate-600 italic p-3 text-center my-auto">Select a chat line.</p>
+                    <div className="flex-1 flex items-center justify-center text-xs text-slate-600 italic p-4 text-center">Select an open billing alert to join the interactive audit thread.</div>
                   )}
                 </div>
               </div>
             </div>
-
-            {/* Broadcast Ticket Generation Interface */}
-            <div className={cardClassName}>
-              <form onSubmit={handleCreateTicket} className="p-4 space-y-2.5">
-                <p className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Raise Audited Rulebook Ticket</p>
-                <input type="text" value={ticketSubject} onChange={e => setTicketSubject(e.target.value)} placeholder="Subject (e.g. Rule 0018 Discrepancy)" className={`${inputClassName} text-xs`} />
-                <textarea rows={2} value={ticketPreview} onChange={e => setTicketPreview(e.target.value)} placeholder="Chat message context for practitioner..." className={`${inputClassName} text-xs resize-none`} />
-                <div className="grid grid-cols-2 gap-2">
-                  <select value={ticketMedicalAid} onChange={e => setTicketMedicalAid(e.target.value)} className={`${inputClassName} bg-slate-950 text-[10px]`}>
-                    <option value="Discovery Health">Discovery Health</option>
-                    <option value="GEMS">GEMS</option>
-                  </select>
-                  <select value={ticketPriority} onChange={e => setTicketPriority(e.target.value as any)} className={`${inputClassName} bg-slate-950 text-[10px]`}>
-                    <option value="open">Standard</option>
-                    <option value="urgent">Urgent</option>
-                  </select>
-                </div>
-                <button type="submit" className="w-full bg-slate-800 text-[10px] uppercase font-bold py-1.5 border border-slate-700 hover:bg-slate-750">Open Chat Thread</button>
-              </form>
-            </div>
-          </section>
-
-          {/* Right Panel Main Verification Grid Pipeline */}
-          <section className="lg:col-span-3 flex flex-col gap-4">
-            <div className={cardClassName}>
-              <div className="border-b border-slate-800 px-4 py-3 flex justify-between items-center bg-slate-950/20">
-                <h2 className="text-sm font-semibold tracking-wide text-slate-200">Adjudication Incoming Stream Queue</h2>
-                <div className="flex gap-1 text-[10px] font-mono bg-slate-950 p-0.5 border border-slate-800">
-                  {["all", "captured", "billed", "on_hold"].map(f => (
-                    <button key={f} onClick={() => setStatusFilter(f as any)} className={`px-2 py-0.5 font-bold uppercase ${statusFilter === f ? "text-teal-400 bg-slate-900" : "text-slate-500"}`}>{f}</button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs border-collapse">
-                  <thead>
-                    <tr className="bg-slate-950/60 font-mono text-[10px] text-slate-500 uppercase border-b border-slate-800">
-                      <th className="p-3">Patient / Case Parameters</th>
-                      <th className="p-3">Medical Aid</th>
-                      <th className="p-3">Theatre Timeline</th>
-                      <th className="p-3 font-mono">ICD-10</th>
-                      <th className="p-3 text-right">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-900/60">
-                    {filteredClaims.map(c => {
-                      const patientStr = c.extra_notes?.match(/\[Patient:\s*([^\]]+)\]/)?.[1] || "Unassigned Patient";
-                      const tCode = c.extra_notes?.match(/\[Procedure Code:\s*([^\]]+)\]/)?.[1] || "—";
-                      const mAid = c.extra_notes?.match(/\[Medical Aid:\s*([^\]]+)\]/)?.[1] || "Discovery Health";
-                      const start = formatTimestampContext(c.theatre_start_time);
-                      const end = formatTimestampContext(c.theatre_end_time);
-
-                      return (
-                        <tr key={c.id} onClick={() => handleSelectClaim(c)} className={`cursor-pointer hover:bg-slate-950/30 transition ${selectedClaim?.id === c.id ? "bg-slate-950/40" : ""}`}>
-                          <td className="p-3">
-                            <p className="font-semibold text-slate-200">{patientStr}</p>
-                            <p className="text-slate-500 text-[11px] mt-0.5 truncate max-w-xs">{c.procedure_description} <span className="text-teal-400 font-mono font-bold text-[10px] ml-1">[{tCode}]</span></p>
-                          </td>
-                          <td className="p-3 font-medium text-slate-300">{mAid}</td>
-                          <td className="p-3 font-mono text-slate-400 text-[11px]">{start.date !== "—" ? `${start.date} @ ${start.time}-${end.time}` : "—"}</td>
-                          <td className="p-3 font-mono text-teal-400 font-bold">{c.icd10_code || "—"}</td>
-                          <td className="p-3 text-right">
-                            <span className={`px-1.5 py-0.5 rounded-sm uppercase tracking-wider text-[9px] border font-medium ${c.status === "captured" ? "bg-teal-950/40 text-teal-400 border-teal-900" : c.status === "billed" ? "bg-blue-950/40 text-blue-400 border-blue-900" : "bg-amber-950/40 text-amber-400 border-amber-900"}`}>{c.status}</span>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            {selectedClaim && (
-              <div className={`grid grid-cols-1 lg:grid-cols-5 gap-4 p-5 ${cardClassName}`}>
-                <div className="lg:col-span-2 flex flex-col gap-1.5">
-                  <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Sheet Verification</p>
-                  <div className="flex-1 bg-slate-950 border border-slate-800 rounded-sm overflow-hidden min-h-[260px] p-2 flex">
-                    {selectedClaim.image_url ? <img src={selectedClaim.image_url} className="max-h-[300px] w-full object-contain m-auto" /> : <p className="text-xs text-slate-600 italic m-auto">No sheet image uploaded.</p>}
-                  </div>
-                </div>
-                <div className="lg:col-span-3 flex flex-col justify-between space-y-3">
-                  <div className="space-y-3 text-xs">
-                    <h4 className="font-bold text-slate-200 uppercase tracking-wide">Adjudication Console</h4>
-                    <div className="p-3 bg-slate-950/80 border border-slate-900 space-y-2 rounded-sm text-[11px]">
-                      <p><span className="text-slate-500">Case Description:</span> <span className="text-slate-300">{selectedClaim.procedure_description}</span></p>
-                      <p><span className="text-slate-500">Extra Parameters Matrix:</span> <span className="text-teal-400 font-mono text-[10px] block mt-1 bg-slate-950 p-1.5 border border-slate-900">{selectedClaim.extra_notes}</span></p>
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <label className="text-[10px] uppercase text-slate-400 font-medium block mb-1">Assign Account Reference</label>
-                        <input type="text" value={accountNumberInput} onChange={e => setAccountNumberInput(e.target.value)} className={inputClassName} placeholder="ACC-8849" />
-                      </div>
-                      <div>
-                        <label className="text-[10px] uppercase text-slate-400 font-medium block mb-1">Set Processing State</label>
-                        <select value={targetStatus} onChange={e => setTargetStatus(e.target.value as any)} className={`${inputClassName} bg-slate-950`}>
-                          <option value="captured">Captured</option>
-                          <option value="billed">Billed</option>
-                          <option value="on_hold">On Hold</option>
-                        </select>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="text-right border-t border-slate-900 pt-3">
-                    <button onClick={handleUpdateClaimState} className="bg-teal-600 px-5 py-2 text-xs uppercase font-sans tracking-wider font-bold text-white rounded-sm hover:bg-teal-500">Commit Changes & Broadcast Sync</button>
-                  </div>
-                </div>
-              </div>
-            )}
-          </section>
+          </aside>
         </div>
       </div>
     </div>
