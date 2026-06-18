@@ -1,8 +1,31 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState, useEffect } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { createClient } from "@/utils/supabase";
 import icd10Database from "@/data/ICD10.json";
+import {
+  AppShell,
+  ContentShell,
+  AppHeader,
+  AppCard,
+  SectionTitle,
+  FieldLabel,
+  TextInput,
+  SelectInput,
+  TextArea,
+  StatPill,
+  ExitButton,
+  MetricTile,
+  MessageBubble,
+  TicketListItem,
+  inputClassName,
+} from "@/components/doclog-ui";
 
 type ClaimStatus = "captured" | "on_hold" | "billed";
 
@@ -84,6 +107,7 @@ const emptyForm = (): ClaimFormState => ({
 const calculateBMI = (weightKg: string, heightCm: string): string => {
   const w = parseFloat(weightKg);
   const h = parseFloat(heightCm) / 100;
+
   if (!w || !h || h === 0) return "";
   return (w / (h * h)).toFixed(1);
 };
@@ -92,26 +116,54 @@ const ALL_ICD10_CODES = (icd10Database?.Employees?.Employee || []) as IcdCodeIte
 
 const PRELOADED_MODIFIERS: ModifierOption[] = [
   { code: "0151", label: "Pre-anaesthetic assessment" },
-  { code: "0147 + 0011", label: "Emergency, Possible PMB-Confirm if reports are available (radiology, xrays, labs) as this will greatly expidite PMB review" },
+  {
+    code: "0147 + 0011",
+    label:
+      "Emergency, Possible PMB-Confirm if reports are available (radiology, xrays, labs) as this will greatly expidite PMB review",
+  },
   { code: "0039", label: "Blood Pressure Control" },
   { code: "0026", label: "One Lung Ventilation" },
   { code: "0032", label: "Position other than supine or lithotomy" },
   { code: "0034", label: "Head, Neck and Shoulder" },
   { code: "0038", label: "Blood salvage/Cell saver" },
   { code: "0042", label: "Extra Corporeal Circulation" },
-  { code: "0043", label: "Patients younger than 1 year or older than 70 years" },
-  { code: "0044", label: "Neonates up to and including 28 days after birth" },
-  { code: "0019", label: "Neonates with a low birthweight less than 2.5kg" },
-  { code: "0018", label: "BMI higher than 35 (Indicate Height & Weight in notes below)" },
-  { code: "5441", label: "Orthopedic Modifier (Carpal, Tarsal, Wrist, Ankle, All bones and muscles not mentioned below)" },
-  { code: "5442", label: "Orthopedic Modifier (Shoulder, Scapula, Knee, Humerus, Clavicla, Upper 1/3 Tib/fib, Elbow, Mandible)" },
+  {
+    code: "0043",
+    label: "Patients younger than 1 year or older than 70 years",
+  },
+  {
+    code: "0044",
+    label: "Neonates up to and including 28 days after birth",
+  },
+  {
+    code: "0019",
+    label: "Neonates with a low birthweight less than 2.5kg",
+  },
+  {
+    code: "0018",
+    label: "BMI higher than 35 (Indicate Height & Weight in notes below)",
+  },
+  {
+    code: "5441",
+    label:
+      "Orthopedic Modifier (Carpal, Tarsal, Wrist, Ankle, All bones and muscles not mentioned below)",
+  },
+  {
+    code: "5442",
+    label:
+      "Orthopedic Modifier (Shoulder, Scapula, Knee, Humerus, Clavicla, Upper 1/3 Tib/fib, Elbow, Mandible)",
+  },
   { code: "5443", label: "Orthopedic Modifier (Orbital)" },
   { code: "5444", label: "Orthopedic Modifier (Shaft of Femur)" },
-  { code: "5445", label: "Orthopedic Modifier (Spine,(exc.cocyx), Hip, Pelvis, Ribs, Skull)" },
+  {
+    code: "5445",
+    label:
+      "Orthopedic Modifier (Spine,(exc.cocyx), Hip, Pelvis, Ribs, Skull)",
+  },
   { code: "5448", label: "Orthopedic Modifier (Sternum)" },
   { code: "0109", label: "Hospital Follow up" },
   { code: "1204", label: "ICU care" },
-  { code: "0007", text: "TCI", label: "TCI" },
+  { code: "0007", label: "TCI" },
   { code: "1215", label: "A-line" },
   { code: "1218", label: "CVP" },
   { code: "1220", label: "Hire fee PCA" },
@@ -127,16 +179,6 @@ const PRELOADED_MODIFIERS: ModifierOption[] = [
   { code: "5103 + 0083", label: "Ultrasound" },
 ];
 
-// ─── Surgical Clean Styling Tokens ───────────────────────────────────────────
-const cardClassName =
-  "rounded border border-cyan-500/40 bg-black p-5 shadow-[0_10px_40px_rgba(0,0,0,0.9)]";
-
-const inputClassName =
-  "w-full rounded border border-cyan-400 bg-black px-3 py-1.5 text-sm font-bold text-cyan-400 placeholder:text-cyan-900 outline-none transition focus:border-cyan-300 focus:ring-1 focus:ring-cyan-300/20 min-h-[36px] [color-scheme:dark]";
-
-const labelClassName =
-  "mb-1 block text-[11px] font-bold uppercase tracking-wider text-slate-200";
-
 export default function DashboardPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const extraFileInputRef = useRef<HTMLInputElement>(null);
@@ -147,24 +189,18 @@ export default function DashboardPage() {
   const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
   const [extraImageFile, setExtraImageFile] = useState<File | null>(null);
   const [extraImagePreviewUrl, setExtraImagePreviewUrl] = useState<string | null>(null);
-
   const [icdSearch, setIcdSearch] = useState("");
   const [icdDropdownOpen, setIcdDropdownOpen] = useState(false);
-
   const [submittedCount, setSubmittedCount] = useState(0);
   const [holdCount, setHoldCount] = useState(0);
-
   const [totalClaimsCount, setTotalClaimsCount] = useState<number | null>(null);
   const [valueBilledTotal, setValueBilledTotal] = useState<number | null>(null);
   const [practiceSuccessRate, setPracticeSuccessRate] = useState<number | null>(null);
-
   const [liveTickets, setLiveTickets] = useState<TicketThread[]>([]);
   const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
   const [ticketMessages, setTicketMessages] = useState<TicketMessage[]>([]);
   const [chatReplyInput, setChatReplyInput] = useState("");
-
   const [providerProfile, setProviderProfile] = useState<ProviderProfile | null>(null);
-
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [realtimeTrigger, setRealtimeTrigger] = useState(0);
@@ -173,14 +209,15 @@ export default function DashboardPage() {
 
   useEffect(() => {
     const bmi = calculateBMI(form.weight, form.height);
-    setForm(p => ({ ...p, bmiInfo: bmi }));
+    setForm((p) => ({ ...p, bmiInfo: bmi }));
   }, [form.weight, form.height]);
 
   const filteredIcdCodes = useMemo(() => {
     if (!icdSearch.trim()) return ALL_ICD10_CODES.slice(0, 10);
     const query = icdSearch.toLowerCase();
+
     return ALL_ICD10_CODES.filter(
-      item =>
+      (item) =>
         item?.ICD10CODE?.toLowerCase().includes(query) ||
         item?.["DESCRIPTION\r"]?.toLowerCase().includes(query)
     ).slice(0, 10);
@@ -188,50 +225,101 @@ export default function DashboardPage() {
 
   const medicalAidWarnings = useMemo(() => {
     const warnings: string[] = [];
-    const mods = form.modifiers.split(",").map(m => m.trim());
-    const procedureCodes = form.procedureCode.split(",").map(c => c.trim());
+    const mods = form.modifiers.split(",").map((m) => m.trim());
+    const procedureCodes = form.procedureCode.split(",").map((c) => c.trim());
 
-    if (mods.includes("0147 + 0011") && !form.extraNotes.toLowerCase().includes("emergency")) {
-      warnings.push("GEMS Rulebook Alert: Emergency modifiers require motivation and supporting reports to apply for PMB.");
+    if (
+      mods.includes("0147 + 0011") &&
+      !form.extraNotes.toLowerCase().includes("emergency")
+    ) {
+      warnings.push(
+        "GEMS Rulebook Alert: Emergency modifiers require motivation and supporting reports to apply for PMB."
+      );
     }
+
     if (parseFloat(form.bmiInfo) > 35 && !mods.includes("0018")) {
-      warnings.push("A registered BMI > 35 requires the selection of Modifier 0018.");
+      warnings.push(
+        "A registered BMI > 35 requires the selection of Modifier 0018."
+      );
     }
+
     const diagnosticCodes = ["1587", "1653", "1493", "2207", "3047", "3058", "2137"];
-    const hasDiagnostic = procedureCodes.some(code => diagnosticCodes.includes(code));
+    const hasDiagnostic = procedureCodes.some((code) =>
+      diagnosticCodes.includes(code)
+    );
+
     if (mods.includes("0018") && hasDiagnostic) {
-      warnings.push("Diagnostic and non-surgical procedures may not be billed with 0018.");
+      warnings.push(
+        "Diagnostic and non-surgical procedures may not be billed with 0018."
+      );
     }
-    if (mods.includes("0043") && form.extraNotes.toLowerCase().indexOf("age") === -1) {
-      warnings.push("Rule 0043 Warning: Patient age validation parameters must be clearly specified within your note layout.");
+
+    if (
+      mods.includes("0043") &&
+      form.extraNotes.toLowerCase().indexOf("age") === -1
+    ) {
+      warnings.push(
+        "Rule 0043 Warning: Patient age validation parameters must be clearly specified within your note layout."
+      );
     }
+
     return warnings;
   }, [form.modifiers, form.bmiInfo, form.extraNotes, form.procedureCode]);
 
   useEffect(() => {
     function handleOutsideDropdownClicks(event: MouseEvent) {
-      if (icdSearchRef.current && !icdSearchRef.current.contains(event.target as Node)) setIcdDropdownOpen(false);
+      if (
+        icdSearchRef.current &&
+        !icdSearchRef.current.contains(event.target as Node)
+      ) {
+        setIcdDropdownOpen(false);
+      }
     }
+
     document.addEventListener("mousedown", handleOutsideDropdownClicks);
-    return () => document.removeEventListener("mousedown", handleOutsideDropdownClicks);
+    return () =>
+      document.removeEventListener("mousedown", handleOutsideDropdownClicks);
   }, []);
 
   useEffect(() => {
     let claimsChannel: any;
     let ticketsChannel: any;
+
     async function initializeSync() {
       const { data: authData } = await supabase.auth.getUser();
       if (!authData?.user) return;
+
       claimsChannel = supabase
         .channel(`cl-sync-${authData.user.id}`)
-        .on("postgres_changes", { event: "UPDATE", schema: "public", table: "claims", filter: `practitioner_id=eq.${authData.user.id}` }, () => setRealtimeTrigger(p => p + 1))
+        .on(
+          "postgres_changes",
+          {
+            event: "UPDATE",
+            schema: "public",
+            table: "claims",
+            filter: `practitioner_id=eq.${authData.user.id}`,
+          },
+          () => setRealtimeTrigger((p) => p + 1)
+        )
         .subscribe();
+
       ticketsChannel = supabase
         .channel(`tk-sync-${authData.user.id}`)
-        .on("postgres_changes", { event: "*", schema: "public", table: "tickets", filter: `practitioner_id=eq.${authData.user.id}` }, () => setRealtimeTrigger(p => p + 1))
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "tickets",
+            filter: `practitioner_id=eq.${authData.user.id}`,
+          },
+          () => setRealtimeTrigger((p) => p + 1)
+        )
         .subscribe();
     }
+
     initializeSync();
+
     return () => {
       if (claimsChannel) supabase.removeChannel(claimsChannel);
       if (ticketsChannel) supabase.removeChannel(ticketsChannel);
@@ -243,6 +331,7 @@ export default function DashboardPage() {
       try {
         const { data: authData } = await supabase.auth.getUser();
         if (!authData?.user) return;
+
         const currentUserId = authData.user.id;
 
         const { data: profile } = await supabase
@@ -257,7 +346,7 @@ export default function DashboardPage() {
           setProviderProfile({
             title_name_surname: "Dr X Burke",
             pr_number: "PR0232610",
-            specialty: "Anaesthesiologist"
+            specialty: "Anaesthesiologist",
           });
         }
 
@@ -268,8 +357,15 @@ export default function DashboardPage() {
 
         if (monthClaims) {
           setTotalClaimsCount(monthClaims.length);
-          const successful = monthClaims.filter((c: any) => c.status === "captured" || c.status === "billed").length;
-          setPracticeSuccessRate(monthClaims.length > 0 ? Math.round((successful / monthClaims.length) * 100) : 100);
+          const successful = monthClaims.filter(
+            (c: any) => c.status === "captured" || c.status === "billed"
+          ).length;
+
+          setPracticeSuccessRate(
+            monthClaims.length > 0
+              ? Math.round((successful / monthClaims.length) * 100)
+              : 100
+          );
         }
 
         const { data: manualReport } = await supabase
@@ -284,75 +380,135 @@ export default function DashboardPage() {
           setValueBilledTotal(0);
         }
 
-        const { data: tk } = await supabase.from("tickets").select("*").eq("practitioner_id", currentUserId).order("updated_at", { ascending: false });
+        const { data: tk } = await supabase
+          .from("tickets")
+          .select("*")
+          .eq("practitioner_id", currentUserId)
+          .order("updated_at", { ascending: false });
+
         if (tk) setLiveTickets(tk as TicketThread[]);
       } catch (err) {
         console.error(err);
       }
     }
+
     fetchLiveMetrics();
   }, [submittedCount, holdCount, realtimeTrigger, supabase]);
 
   useEffect(() => {
     if (!selectedTicketId) return;
+
     let msgChannel: any;
+
     async function fetchMessages() {
-      const { data } = await supabase.from("ticket_messages").select("*").eq("ticket_id", selectedTicketId).order("created_at", { ascending: true });
-      if (data) setTicketMessages(data as any[]);
+      const { data } = await supabase
+        .from("ticket_messages")
+        .select("*")
+        .eq("ticket_id", selectedTicketId)
+        .order("created_at", { ascending: true });
+
+      if (data) setTicketMessages(data as TicketMessage[]);
+
       msgChannel = supabase
         .channel(`msg-sync-${selectedTicketId}`)
-        .on("postgres_changes", { event: "INSERT", schema: "public", table: "ticket_messages", filter: `ticket_id=eq.${selectedTicketId}` }, (payload: { new: TicketMessage }) => {
-          setTicketMessages(prev => [...prev, payload.new]);
-        })
+        .on(
+          "postgres_changes",
+          {
+            event: "INSERT",
+            schema: "public",
+            table: "ticket_messages",
+            filter: `ticket_id=eq.${selectedTicketId}`,
+          },
+          (payload: { new: TicketMessage }) => {
+            setTicketMessages((prev) => [...prev, payload.new]);
+          }
+        )
         .subscribe();
     }
+
     fetchMessages();
-    return () => { if (msgChannel) supabase.removeChannel(msgChannel); };
+
+    return () => {
+      if (msgChannel) supabase.removeChannel(msgChannel);
+    };
   }, [selectedTicketId, supabase]);
 
   const handleSendChatReply = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!chatReplyInput.trim() || !selectedTicketId) return;
+
     try {
       const { data: authData } = await supabase.auth.getUser();
       if (!authData?.user) return;
+
       await supabase.from("ticket_messages").insert([
-        { ticket_id: selectedTicketId, sender_id: authData.user.id, sender_role: "practitioner", message: chatReplyInput.trim() }
+        {
+          ticket_id: selectedTicketId,
+          sender_id: authData.user.id,
+          sender_role: "practitioner",
+          message: chatReplyInput.trim(),
+        },
       ]);
+
       setChatReplyInput("");
-    } catch (err) { console.error(err); }
+    } catch (err) {
+      console.error(err);
+    }
   };
 
   const handlePingOffice = async () => {
     if (!selectedTicketId) return;
+
     try {
       const { data: authData } = await supabase.auth.getUser();
       if (!authData?.user) return;
+
       await supabase.from("ticket_messages").insert([
-        { ticket_id: selectedTicketId, sender_id: authData.user.id, sender_role: "practitioner", message: "⚠️ Practitioner requested an immediate case update status ping." }
+        {
+          ticket_id: selectedTicketId,
+          sender_id: authData.user.id,
+          sender_role: "practitioner",
+          message: "⚠️ Practitioner requested an immediate case update status ping.",
+        },
       ]);
-    } catch (err) { console.error(err); }
+    } catch (err) {
+      console.error(err);
+    }
   };
 
   const handleMarkTicketComplete = async () => {
     if (!selectedTicketId) return;
+
     try {
-      await supabase.from("tickets").update({ status: "closed" }).eq("id", selectedTicketId);
+      await supabase
+        .from("tickets")
+        .update({ status: "closed" })
+        .eq("id", selectedTicketId);
+
       setSelectedTicketId(null);
-      setRealtimeTrigger(p => p + 1);
-    } catch (err) { console.error(err); }
+      setRealtimeTrigger((p) => p + 1);
+    } catch (err) {
+      console.error(err);
+    }
   };
 
   const validateForm = (): string | null => {
-    if (!form.icd10Code.trim()) return "ICD-10 Diagnostic Code is required before submission.";
-    if (!form.theatreStartTime.trim()) return "Theatre start time is required.";
-    if (!form.theatreEndTime.trim()) return "Theatre end time is required.";
+    if (!form.icd10Code.trim()) {
+      return "ICD-10 Diagnostic Code is required before submission.";
+    }
+    if (!form.theatreStartTime.trim()) {
+      return "Theatre start time is required.";
+    }
+    if (!form.theatreEndTime.trim()) {
+      return "Theatre end time is required.";
+    }
     return null;
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
     if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
     setImageFile(file);
     setImagePreviewUrl(URL.createObjectURL(file));
@@ -361,6 +517,7 @@ export default function DashboardPage() {
   const handleExtraFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
     if (extraImagePreviewUrl) URL.revokeObjectURL(extraImagePreviewUrl);
     setExtraImageFile(file);
     setExtraImagePreviewUrl(URL.createObjectURL(file));
@@ -388,52 +545,111 @@ export default function DashboardPage() {
 
   const handlePersistClaim = async (targetStatus: ClaimStatus) => {
     if (isSaving) return;
+
     if (targetStatus === "captured") {
       const errCheck = validateForm();
-      if (errCheck) { setError(errCheck); return; }
+      if (errCheck) {
+        setError(errCheck);
+        return;
+      }
     }
+
     setIsSaving(true);
     setError(null);
+
     try {
       let uploadedImageUrl = null;
+
       if (imageFile) {
         const path = `${crypto.randomUUID()}.${imageFile.name.split(".").pop()}`;
-        const { error: upErr } = await supabase.storage.from("claim-attachments").upload(path, imageFile);
+        const { error: upErr } = await supabase
+          .storage
+          .from("claim-attachments")
+          .upload(path, imageFile);
+
         if (upErr) throw upErr;
-        uploadedImageUrl = supabase.storage.from("claim-attachments").getPublicUrl(path).data.publicUrl;
+
+        uploadedImageUrl = supabase
+          .storage
+          .from("claim-attachments")
+          .getPublicUrl(path).data.publicUrl;
       }
+
       let uploadedExtraImageUrl = null;
+
       if (extraImageFile) {
-        const path = `extra-${crypto.randomUUID()}.${extraImageFile.name.split(".").pop()}`;
-        const { error: upErr } = await supabase.storage.from("claim-attachments").upload(path, extraImageFile);
+        const path = `extra-${crypto.randomUUID()}.${extraImageFile.name
+          .split(".")
+          .pop()}`;
+
+        const { error: upErr } = await supabase
+          .storage
+          .from("claim-attachments")
+          .upload(path, extraImageFile);
+
         if (upErr) throw upErr;
-        uploadedExtraImageUrl = supabase.storage.from("claim-attachments").getPublicUrl(path).data.publicUrl;
+
+        uploadedExtraImageUrl = supabase
+          .storage
+          .from("claim-attachments")
+          .getPublicUrl(path).data.publicUrl;
       }
+
       const { data: authData } = await supabase.auth.getUser();
       if (!authData?.user) throw new Error("Authentication state lost.");
+
       const currentUserId = authData.user.id;
 
-      const compositeNotes = `[Patient: ${form.patientName.trim() || "N/A"} ${form.patientSurname.trim() || "N/A"}] [Procedure Code: ${form.procedureCode.trim() || "None assigned"}] [Billing Rate: ${form.billingRate}] [Weight: ${form.weight || "N/A"}kg] [Height: ${form.height || "N/A"}cm] [BMI: ${form.bmiInfo || "N/A"}] ${form.extraNotes.trim()}`.trim();
+      const compositeNotes = `[Patient: ${form.patientName.trim() || "N/A"} ${
+        form.patientSurname.trim() || "N/A"
+      }] [Procedure Code: ${form.procedureCode.trim() || "None assigned"}] [Billing Rate: ${
+        form.billingRate
+      }] [Weight: ${form.weight || "N/A"}kg] [Height: ${form.height || "N/A"}cm] [BMI: ${
+        form.bmiInfo || "N/A"
+      }] ${form.extraNotes.trim()}`.trim();
 
-      const { data: record, error: claimErr } = await supabase.from("claims").insert([{
-        practitioner_id: currentUserId,
-        procedure_description: form.procedureDescription || "Incomplete Case Record",
-        icd10_code: form.icd10Code || null,
-        theatre_start_time: form.theatreStartTime ? new Date(`${form.theatreDate}T${form.theatreStartTime}`).toISOString() : null,
-        theatre_end_time: form.theatreEndTime ? new Date(`${form.theatreDate}T${form.theatreEndTime}`).toISOString() : null,
-        bmi_info: form.bmiInfo ? parseFloat(form.bmiInfo) : null,
-        modifiers: form.modifiers ? form.modifiers.split(",").map(m => m.trim()).filter(Boolean) : [],
-        extra_notes: compositeNotes,
-        image_url: uploadedImageUrl,
-        extra_image_url: uploadedExtraImageUrl,
-        status: targetStatus
-      }]).select().single();
+      const { data: record, error: claimErr } = await supabase
+        .from("claims")
+        .insert([
+          {
+            practitioner_id: currentUserId,
+            procedure_description: form.procedureDescription || "Incomplete Case Record",
+            icd10_code: form.icd10Code || null,
+            theatre_start_time: form.theatreStartTime
+              ? new Date(`${form.theatreDate}T${form.theatreStartTime}`).toISOString()
+              : null,
+            theatre_end_time: form.theatreEndTime
+              ? new Date(`${form.theatreDate}T${form.theatreEndTime}`).toISOString()
+              : null,
+            bmi_info: form.bmiInfo ? parseFloat(form.bmiInfo) : null,
+            modifiers: form.modifiers
+              ? form.modifiers.split(",").map((m) => m.trim()).filter(Boolean)
+              : [],
+            extra_notes: compositeNotes,
+            image_url: uploadedImageUrl,
+            extra_image_url: uploadedExtraImageUrl,
+            status: targetStatus,
+          },
+        ])
+        .select()
+        .single();
 
       if (claimErr) throw claimErr;
-      await supabase.from("audit_logs").insert([{ claim_id: record.id, user_id: currentUserId, action: "Claim submitted via Practitioner Workspace." }]);
 
-      if (targetStatus === "captured") setSubmittedCount(c => c + 1);
-      else setHoldCount(c => c + 1);
+      await supabase.from("audit_logs").insert([
+        {
+          claim_id: record.id,
+          user_id: currentUserId,
+          action: "Claim submitted via Practitioner Workspace.",
+        },
+      ]);
+
+      if (targetStatus === "captured") {
+        setSubmittedCount((c) => c + 1);
+      } else {
+        setHoldCount((c) => c + 1);
+      }
+
       resetForm();
     } catch (err: any) {
       setError(err.message || "Submission failed. Please try again.");
@@ -442,7 +658,11 @@ export default function DashboardPage() {
     }
   };
 
-  const updateField = useCallback((field: keyof ClaimFormState, value: string) => setForm(p => ({ ...p, [field]: value })), []);
+  const updateField = useCallback(
+    (field: keyof ClaimFormState, value: string) =>
+      setForm((p) => ({ ...p, [field]: value })),
+    []
+  );
 
   const selectIcdCode = (opt: { code: string; description: string }) => {
     updateField("icd10Code", opt.code);
@@ -450,392 +670,580 @@ export default function DashboardPage() {
     setIcdDropdownOpen(false);
   };
 
-  const toggleModifierCode = (c: string) => {
-    const cur = form.modifiers ? form.modifiers.split(",").map(m => m.trim()).filter(Boolean) : [];
-    const upd = cur.includes(c) ? cur.filter(x => x !== c) : [...cur, c];
-    updateField("modifiers", upd.join(", "));
+  const toggleModifierCode = (code: string) => {
+    const current = form.modifiers
+      ? form.modifiers.split(",").map((m) => m.trim()).filter(Boolean)
+      : [];
+
+    const updated = current.includes(code)
+      ? current.filter((x) => x !== code)
+      : [...current, code];
+
+    updateField("modifiers", updated.join(", "));
   };
 
   const bmiMeta = useMemo(() => {
     const val = parseFloat(form.bmiInfo);
-    if (!val) return { label: "", color: "text-slate-400" };
-    if (val < 18.5) return { label: "Underweight", color: "text-cyan-400" };
-    if (val < 25) return { label: "Normal", color: "text-cyan-400" };
-    if (val < 30) return { label: "Overweight", color: "text-amber-400" };
-    return { label: "Obese", color: "text-red-500" };
+
+    if (!val) return { label: "", color: "text-[#7F8FA3]" };
+    if (val < 18.5) return { label: "Underweight", color: "text-[#00C2D1]" };
+    if (val < 25) return { label: "Normal", color: "text-[#00C2D1]" };
+    if (val < 30) return { label: "Overweight", color: "text-[#E7B75B]" };
+
+    return { label: "Obese", color: "text-red-400" };
   }, [form.bmiInfo]);
 
   return (
-    <div className="relative min-h-screen bg-black text-slate-100 flex flex-col font-sans antialiased selection:bg-cyan-500/30">
-      <div className="relative mx-auto w-full max-w-[1720px] px-4 py-4 flex-1 flex flex-col gap-4">
+    <AppShell>
+      <AppHeader
+        title="THE DOC LOG"
+        byline="BY MEDIBURGH"
+        tagline="Clinical Speed. Restless Automation."
+        subline="Real-Time Case Capture & Billing Matrix"
+        right={
+          <>
+            <StatPill label="SUBMITTED" value={submittedCount} />
+            <StatPill label="HELD" value={holdCount} />
+            <ExitButton onClick={() => (window.location.href = "/")}>
+              EXIT
+            </ExitButton>
+          </>
+        }
+      />
 
-        {/* ── HEADER ────────────────────────────────────────────────────────── */}
-        <header className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between border-b border-cyan-500/20 pb-3">
-          <div className="flex flex-col gap-0.5">
-            <div className="flex items-baseline gap-2">
-              <span className="inline-block w-1.5 h-1.5 rounded-full bg-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.8)]" />
-              <span className="text-[10px] font-bold tracking-[0.2em] uppercase text-cyan-400">by MediBurgh</span>
+      <ContentShell>
+        {providerProfile && (
+          <div className="rounded-[14px] border border-[#1F242C] bg-[#10141A] px-4 py-3">
+            <div className="flex flex-wrap items-center gap-2 text-[11px] text-[#7F8FA3]">
+              <span className="font-semibold text-[#E8F1FF]">
+                {providerProfile.title_name_surname}
+              </span>
+              <span>•</span>
+              <span className="rounded border border-[#1F242C] bg-[#14181F] px-2 py-0.5 text-[#00C2D1]">
+                {providerProfile.pr_number}
+              </span>
+              <span>•</span>
+              <span>{providerProfile.specialty}</span>
             </div>
-            <h1 className="text-2xl font-black tracking-tight text-white uppercase">The Doc Log</h1>
-            
-            {providerProfile && (
-              <div className="mt-1 flex items-center gap-2 font-mono text-[11px] text-slate-400">
-                <span className="font-bold text-cyan-400">{providerProfile.title_name_surname}</span>
-                <span>•</span>
-                <span className="border border-cyan-500/30 px-1 rounded text-[10px] text-cyan-300 bg-cyan-950/20">{providerProfile.pr_number}</span>
-                <span>•</span>
-                <span>{providerProfile.specialty}</span>
-              </div>
-            )}
           </div>
+        )}
 
-          <div className="flex items-center gap-2 font-mono text-xs">
-            <div className="rounded border border-cyan-500/30 bg-black px-3 py-1.5 text-cyan-400 font-bold">
-              SUBMITTED: <span>{submittedCount}</span>
-            </div>
-            <div className="rounded border border-amber-500/30 bg-black px-3 py-1.5 text-amber-400 font-bold">
-              HELD: <span>{holdCount}</span>
-            </div>
-            <button
-              onClick={() => window.location.href = "/"}
-              className="rounded border border-red-500/40 bg-black px-4 py-1.5 text-[11px] font-bold uppercase tracking-wider text-red-400 transition hover:bg-red-950/20"
-            >
-              Exit
-            </button>
-          </div>
-        </header>
-
-        {/* ── MAIN GRID ─────────────────────────────────────────────────────── */}
-        <div className="grid grid-cols-1 xl:grid-cols-5 gap-4 flex-1">
-
-          {/* ── LEFT: Claim capture form ──────────────────────────────────── */}
-          <section className={`xl:col-span-3 space-y-4 ${cardClassName}`}>
-            <div className="border-b border-cyan-500/20 pb-2 mb-2 flex items-center justify-between">
-              <h2 className="text-xs font-black uppercase tracking-wider text-white">Primary Billing Sheet</h2>
-              <span className="text-[10px] font-mono text-cyan-400/70">CASE CAPTURE PANEL</span>
-            </div>
-
-            {medicalAidWarnings.length > 0 && (
-              <div className="rounded border border-amber-500/30 bg-black p-3 space-y-1">
-                {medicalAidWarnings.map((w, idx) => (
-                  <p key={idx} className="flex gap-2 text-[11px] text-amber-400">
-                    <span>⚠️</span><span>{w}</span>
-                  </p>
-                ))}
-              </div>
-            )}
-
-            {error && (
-              <div className="rounded border border-red-500/40 bg-black px-3 py-2 text-[11px] text-red-400 font-bold">
-                {error}
-              </div>
-            )}
-
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              
-              {/* Image Upload Block */}
-              <div className="space-y-3">
-                {!imagePreviewUrl ? (
-                  <div
-                    onClick={() => fileInputRef.current?.click()}
-                    className="flex min-h-[180px] cursor-pointer flex-col items-center justify-center rounded border border-cyan-500/30 bg-black p-4 text-center transition hover:border-cyan-400 hover:shadow-[0_0_15px_rgba(6,182,212,0.1)]"
-                  >
-                    <svg className="mb-2 h-6 w-6 text-cyan-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
-                    </svg>
-                    <p className="text-xs font-bold text-slate-200 uppercase tracking-wider">Capture Primary Billing Sheet</p>
-                    <p className="mt-0.5 text-[10px] text-cyan-600/80 font-mono">PNG, JPEG, OR CAMERA</p>
-                  </div>
-                ) : (
-                  <div className="relative rounded border border-cyan-500/30 bg-black p-2">
-                    <img src={imagePreviewUrl} className="max-h-[180px] w-full rounded object-contain mx-auto" alt="Primary Billing Sheet" />
-                    <button onClick={clearImage} className="absolute top-2 right-2 rounded bg-red-950 border border-red-500 text-red-400 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider">Remove</button>
-                  </div>
-                )}
-                <input ref={fileInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleFileChange} />
-
-                {!extraImagePreviewUrl ? (
-                  <div
-                    onClick={() => extraFileInputRef.current?.click()}
-                    className="flex min-h-[100px] cursor-pointer flex-col items-center justify-center rounded border border-cyan-500/20 bg-black p-3 text-center transition hover:border-cyan-500/40"
-                  >
-                    <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">+ Add Supporting Document</p>
-                    <p className="mt-0.5 text-[9px] text-cyan-700 font-mono">ALLOCATION SHEET / REPORT ATTACHMENT</p>
-                  </div>
-                ) : (
-                  <div className="relative rounded border border-cyan-500/20 bg-black p-2">
-                    <img src={extraImagePreviewUrl} className="max-h-[100px] w-full rounded object-contain mx-auto" alt="Supporting Document" />
-                    <button onClick={clearExtraImage} className="absolute top-2 right-2 rounded bg-red-950 border border-red-500 text-red-400 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider">Remove</button>
-                  </div>
-                )}
-                <input ref={extraFileInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleExtraFileChange} />
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-5 flex-1">
+          <section className="xl:col-span-3">
+            <AppCard className="space-y-4">
+              <div className="flex items-center justify-between border-b border-[#232A33] pb-2">
+                <SectionTitle className="mb-0">
+                  Primary Billing Sheet
+                </SectionTitle>
+                <span className="text-[10px] font-medium uppercase tracking-[0.8px] text-[#6C7A89]">
+                  Case Capture Panel
+                </span>
               </div>
 
-              {/* Input Form Fields */}
-              <form onSubmit={e => e.preventDefault()} className="space-y-3">
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className={labelClassName}>Patient Name</label>
-                    <input type="text" value={form.patientName} onChange={e => updateField("patientName", e.target.value)} className={inputClassName} placeholder="First name" />
-                  </div>
-                  <div>
-                    <label className={labelClassName}>Surname</label>
-                    <input type="text" value={form.patientSurname} onChange={e => updateField("patientSurname", e.target.value)} className={inputClassName} placeholder="Surname" />
-                  </div>
+              {medicalAidWarnings.length > 0 && (
+                <div className="rounded-[14px] border border-[#3B3120] bg-[#14181F] p-3 space-y-1">
+                  {medicalAidWarnings.map((warning, idx) => (
+                    <p
+                      key={idx}
+                      className="flex gap-2 text-[11px] text-[#E7B75B]"
+                    >
+                      <span>⚠️</span>
+                      <span>{warning}</span>
+                    </p>
+                  ))}
                 </div>
+              )}
 
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className={labelClassName}>Billing Rate</label>
-                    <select value={form.billingRate} onChange={e => updateField("billingRate", e.target.value)} className={`${inputClassName} [color-scheme:dark]`}>
-                      <option value="Practice Profile">Practice Profile</option>
-                      <option value="Medical aid rates, No Copay">Medical aid rates, No Copay</option>
-                      <option value="International/Private">International/Private</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className={labelClassName}>Procedure Code / Tariffs</label>
-                    <input type="text" value={form.procedureCode} onChange={e => updateField("procedureCode", e.target.value)} className={inputClassName} placeholder="e.g. 0012, 5432" />
-                  </div>
+              {error && (
+                <div className="rounded-[14px] border border-[#5A2323] bg-[#14181F] px-3 py-2 text-[11px] font-semibold text-red-400">
+                  {error}
                 </div>
+              )}
 
-                <div>
-                  <label className={labelClassName}>Procedure Description</label>
-                  <input type="text" value={form.procedureDescription} onChange={e => updateField("procedureDescription", e.target.value)} className={inputClassName} placeholder="Surgical description..." />
-                </div>
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                <div className="space-y-3">
+                  {!imagePreviewUrl ? (
+                    <div
+                      onClick={() => fileInputRef.current?.click()}
+                      className="flex min-h-[180px] cursor-pointer flex-col items-center justify-center rounded-[14px] border border-[#1F242C] bg-[#14181F] p-4 text-center transition hover:border-[#00C2D1]"
+                    >
+                      <svg
+                        className="mb-2 h-6 w-6 text-[#00C2D1]"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                        strokeWidth={2}
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5"
+                        />
+                      </svg>
 
-                {/* ICD-10 Search Box */}
-                <div ref={icdSearchRef} className="relative">
-                  <label className={`${labelClassName} text-cyan-300 font-black`}>
-                    ICD-10 Diagnostic Search <span className="text-cyan-400">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={icdSearch}
-                    onFocus={() => setIcdDropdownOpen(true)}
-                    onChange={e => setIcdSearch(e.target.value)}
-                    className={`${inputClassName} border-cyan-400`}
-                    placeholder="Search diagnostic classifications..."
-                  />
-                  {icdDropdownOpen && filteredIcdCodes.length > 0 && (
-                    <ul className="absolute z-20 mt-1 max-h-40 w-full overflow-y-auto rounded border border-cyan-400 bg-black divide-y divide-cyan-950 shadow-2xl">
-                      {filteredIcdCodes.map((i, idx) => {
-                        const code = i?.ICD10CODE || "";
-                        const desc = i?.["DESCRIPTION\r"] || "";
-                        return (
-                          <li key={code || idx} onClick={() => selectIcdCode({ code, description: desc })} className="flex cursor-pointer items-center justify-between gap-3 px-3 py-1.5 text-xs transition hover:bg-cyan-950/40">
-                            <span className="font-mono font-bold text-cyan-400 whitespace-nowrap">{code || "N/A"}</span>
-                            <span className="truncate text-slate-300">{desc}</span>
-                          </li>
-                        );
-                      })}
-                    </ul>
+                      <p className="text-xs font-semibold uppercase tracking-[0.8px] text-[#DDE7F5]">
+                        Capture Primary Billing Sheet
+                      </p>
+                      <p className="mt-0.5 text-[10px] text-[#6C7A89]">
+                        PNG, JPEG, OR CAMERA
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="relative rounded-[14px] border border-[#1F242C] bg-[#14181F] p-2">
+                      <img
+                        src={imagePreviewUrl}
+                        className="mx-auto max-h-[180px] w-full rounded object-contain"
+                        alt="Primary Billing Sheet"
+                      />
+                      <button
+                        onClick={clearImage}
+                        className="absolute right-2 top-2 rounded-[10px] border border-[#5A2323] bg-[#2A1313] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.6px] text-red-400"
+                      >
+                        Remove
+                      </button>
+                    </div>
                   )}
+
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    className="hidden"
+                    onChange={handleFileChange}
+                  />
+
+                  {!extraImagePreviewUrl ? (
+                    <div
+                      onClick={() => extraFileInputRef.current?.click()}
+                      className="flex min-h-[100px] cursor-pointer flex-col items-center justify-center rounded-[14px] border border-[#1F242C] bg-[#14181F] p-3 text-center transition hover:border-[#00C2D1]"
+                    >
+                      <p className="text-xs font-semibold uppercase tracking-[0.8px] text-[#A9B7CA]">
+                        + Add Supporting Document
+                      </p>
+                      <p className="mt-0.5 text-[9px] text-[#6C7A89]">
+                        Allocation Sheet / Report Attachment
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="relative rounded-[14px] border border-[#1F242C] bg-[#14181F] p-2">
+                      <img
+                        src={extraImagePreviewUrl}
+                        className="mx-auto max-h-[100px] w-full rounded object-contain"
+                        alt="Supporting Document"
+                      />
+                      <button
+                        onClick={clearExtraImage}
+                        className="absolute right-2 top-2 rounded-[10px] border border-[#5A2323] bg-[#2A1313] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.6px] text-red-400"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  )}
+
+                  <input
+                    ref={extraFileInputRef}
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    className="hidden"
+                    onChange={handleExtraFileChange}
+                  />
                 </div>
 
-                {/* Date & Time Selection (STRICT ORIGINAL 3-COLUMN MAPPING) */}
-                <div className="grid grid-cols-3 gap-2 border-t border-cyan-500/20 pt-2.5">
-                  <div className="col-span-3 sm:col-span-1">
-                    <label className={labelClassName}>Theatre Date</label>
-                    <input type="date" value={form.theatreDate} onChange={e => updateField("theatreDate", e.target.value)} className={inputClassName} />
-                  </div>
-                  <div>
-                    <label className={`${labelClassName} text-cyan-300`}>Start Clock <span className="text-cyan-400">*</span></label>
-                    <input type="time" value={form.theatreStartTime} onChange={e => updateField("theatreStartTime", e.target.value)} className={inputClassName} />
-                  </div>
-                  <div>
-                    <label className={`${labelClassName} text-cyan-300`}>End Clock <span className="text-cyan-400">*</span></label>
-                    <input type="time" value={form.theatreEndTime} onChange={e => updateField("theatreEndTime", e.target.value)} className={inputClassName} />
-                  </div>
-                </div>
+                <form onSubmit={(e) => e.preventDefault()} className="space-y-3">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <FieldLabel>Patient Name</FieldLabel>
+                      <TextInput
+                        type="text"
+                        value={form.patientName}
+                        onChange={(e) => updateField("patientName", e.target.value)}
+                        placeholder="First name"
+                      />
+                    </div>
 
-                {/* Patient Biometrics Block (STRICT ORIGINAL 3-COLUMN MAPPING) */}
-                <div className="grid grid-cols-3 gap-2 border-t border-cyan-500/20 pt-2.5">
-                  <div>
-                    <label className={labelClassName}>Weight (kg)</label>
-                    <input type="number" min="0" step="0.1" value={form.weight} onChange={e => updateField("weight", e.target.value)} className={inputClassName} placeholder="75" />
-                  </div>
-                  <div>
-                    <label className={labelClassName}>Height (cm)</label>
-                    <input type="number" min="0" step="0.1" value={form.height} onChange={e => updateField("height", e.target.value)} className={inputClassName} placeholder="175" />
-                  </div>
-                  <div>
-                    <label className={labelClassName}>BMI</label>
-                    <div className={`${inputClassName} flex flex-col justify-center`}>
-                      {form.bmiInfo ? (
-                        <div className="flex items-baseline justify-between w-full">
-                          <span className={`font-mono font-bold text-sm ${bmiMeta.color}`}>{form.bmiInfo}</span>
-                          <span className={`text-[8px] font-black uppercase tracking-wider ${bmiMeta.color}`}>{bmiMeta.label}</span>
-                        </div>
-                      ) : (
-                        <span className="text-cyan-900 text-xs font-mono">AUTO</span>
-                      )}
+                    <div>
+                      <FieldLabel>Surname</FieldLabel>
+                      <TextInput
+                        type="text"
+                        value={form.patientSurname}
+                        onChange={(e) =>
+                          updateField("patientSurname", e.target.value)
+                        }
+                        placeholder="Surname"
+                      />
                     </div>
                   </div>
-                </div>
 
-                {/* Modifiers List Block */}
-                <div>
-                  <label className={labelClassName}>Modifiers Selector Block</label>
-                  <div className="max-h-28 overflow-y-auto rounded border border-cyan-500/30 bg-black p-1 space-y-0.5 scrollbar-thin scrollbar-thumb-cyan-950">
-                    {PRELOADED_MODIFIERS.map(m => {
-                      const isSel = form.modifiers.includes(m.code);
-                      return (
-                        <button
-                          key={m.code}
-                          type="button"
-                          onClick={() => toggleModifierCode(m.code)}
-                          title={m.label}
-                          className={`flex w-full items-start gap-2 rounded px-2 py-1 text-left text-[11px] transition ${isSel
-                            ? "border border-cyan-400 bg-cyan-950/40 text-cyan-300 font-bold"
-                            : "border border-transparent text-slate-400 hover:bg-cyan-950/20 hover:text-cyan-400"
-                            }`}
-                        >
-                          <span className="font-mono whitespace-nowrap">[{m.code}]</span>
-                          <span className="opacity-90 truncate font-sans text-[10px]">{m.label}</span>
-                        </button>
-                      );
-                    })}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <FieldLabel>Billing Rate</FieldLabel>
+                      <SelectInput
+                        value={form.billingRate}
+                        onChange={(e) => updateField("billingRate", e.target.value)}
+                      >
+                        <option value="Practice Profile">Practice Profile</option>
+                        <option value="Medical aid rates, No Copay">
+                          Medical aid rates, No Copay
+                        </option>
+                        <option value="International/Private">
+                          International/Private
+                        </option>
+                      </SelectInput>
+                    </div>
+
+                    <div>
+                      <FieldLabel>Procedure Code / Tariffs</FieldLabel>
+                      <TextInput
+                        type="text"
+                        value={form.procedureCode}
+                        onChange={(e) =>
+                          updateField("procedureCode", e.target.value)
+                        }
+                        placeholder="e.g. 0012, 5432"
+                      />
+                    </div>
                   </div>
-                </div>
 
-                <div>
-                  <label className={labelClassName}>Extra Diagnostic Notes</label>
-                  <textarea rows={1} value={form.extraNotes} onChange={e => updateField("extraNotes", e.target.value)} className={`${inputClassName} resize-none py-1`} placeholder="Anaesthesia notes or system audit details..." />
-                </div>
-              </form>
-            </div>
+                  <div>
+                    <FieldLabel>Procedure Description</FieldLabel>
+                    <TextInput
+                      type="text"
+                      value={form.procedureDescription}
+                      onChange={(e) =>
+                        updateField("procedureDescription", e.target.value)
+                      }
+                      placeholder="Surgical description..."
+                    />
+                  </div>
 
-            {/* Action Buttons */}
-            <div className="grid grid-cols-2 gap-3 border-t border-cyan-500/20 pt-3">
-              <button
-                onClick={() => handlePersistClaim("captured")}
-                disabled={isSaving}
-                className="rounded border border-cyan-400 bg-black py-2.5 text-xs font-black uppercase tracking-widest text-cyan-400 transition hover:bg-cyan-950/30 disabled:opacity-50"
-              >
-                {isSaving ? "Submitting…" : "Submit Claim"}
-              </button>
-              <button
-                onClick={() => handlePersistClaim("on_hold")}
-                disabled={isSaving}
-                className="rounded border border-amber-500/50 bg-black py-2.5 text-xs font-black uppercase tracking-widest text-amber-400 transition hover:bg-amber-950/20 disabled:opacity-50"
-              >
-                Hold Case
-              </button>
-            </div>
+                  <div ref={icdSearchRef} className="relative">
+                    <FieldLabel className="text-[#00C2D1]">
+                      ICD-10 Diagnostic Search *
+                    </FieldLabel>
+
+                    <TextInput
+                      type="text"
+                      value={icdSearch}
+                      onFocus={() => setIcdDropdownOpen(true)}
+                      onChange={(e) => setIcdSearch(e.target.value)}
+                      placeholder="Search diagnostic classifications..."
+                    />
+
+                    {icdDropdownOpen && filteredIcdCodes.length > 0 && (
+                      <ul className="absolute z-20 mt-1 max-h-40 w-full overflow-y-auto rounded-[14px] border border-[#1F242C] bg-[#10141A] divide-y divide-[#232A33] shadow-[0_10px_30px_rgba(0,0,0,0.35)]">
+                        {filteredIcdCodes.map((item, idx) => {
+                          const code = item?.ICD10CODE || "";
+                          const desc = item?.["DESCRIPTION\r"] || "";
+
+                          return (
+                            <li
+                              key={code || idx}
+                              onClick={() =>
+                                selectIcdCode({ code, description: desc })
+                              }
+                              className="flex cursor-pointer items-center justify-between gap-3 px-3 py-2 text-xs transition hover:bg-[#16232A]"
+                            >
+                              <span className="whitespace-nowrap font-mono font-semibold text-[#00C2D1]">
+                                {code || "N/A"}
+                              </span>
+                              <span className="truncate text-[#DDE7F5]">
+                                {desc}
+                              </span>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-2 border-t border-[#232A33] pt-2.5">
+                    <div className="col-span-3 sm:col-span-1">
+                      <FieldLabel>Theatre Date</FieldLabel>
+                      <TextInput
+                        type="date"
+                        value={form.theatreDate}
+                        onChange={(e) => updateField("theatreDate", e.target.value)}
+                      />
+                    </div>
+
+                    <div>
+                      <FieldLabel className="text-[#00C2D1]">
+                        Start Clock *
+                      </FieldLabel>
+                      <TextInput
+                        type="time"
+                        value={form.theatreStartTime}
+                        onChange={(e) =>
+                          updateField("theatreStartTime", e.target.value)
+                        }
+                      />
+                    </div>
+
+                    <div>
+                      <FieldLabel className="text-[#00C2D1]">
+                        End Clock *
+                      </FieldLabel>
+                      <TextInput
+                        type="time"
+                        value={form.theatreEndTime}
+                        onChange={(e) =>
+                          updateField("theatreEndTime", e.target.value)
+                        }
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-2 border-t border-[#232A33] pt-2.5">
+                    <div>
+                      <FieldLabel>Weight (kg)</FieldLabel>
+                      <TextInput
+                        type="number"
+                        min="0"
+                        step="0.1"
+                        value={form.weight}
+                        onChange={(e) => updateField("weight", e.target.value)}
+                        placeholder="75"
+                      />
+                    </div>
+
+                    <div>
+                      <FieldLabel>Height (cm)</FieldLabel>
+                      <TextInput
+                        type="number"
+                        min="0"
+                        step="0.1"
+                        value={form.height}
+                        onChange={(e) => updateField("height", e.target.value)}
+                        placeholder="175"
+                      />
+                    </div>
+
+                    <div>
+                      <FieldLabel>BMI</FieldLabel>
+                      <div className={`${inputClassName} flex items-center`}>
+                        {form.bmiInfo ? (
+                          <div className="flex w-full items-baseline justify-between">
+                            <span className={`font-mono text-sm font-semibold ${bmiMeta.color}`}>
+                              {form.bmiInfo}
+                            </span>
+                            <span className={`text-[8px] font-semibold uppercase tracking-[0.6px] ${bmiMeta.color}`}>
+                              {bmiMeta.label}
+                            </span>
+                          </div>
+                        ) : (
+                          <span className="text-xs font-medium text-[#6C7A89]">
+                            AUTO
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <FieldLabel>Modifiers Selector Block</FieldLabel>
+                    <div className="max-h-28 overflow-y-auto rounded-[14px] border border-[#1F242C] bg-[#14181F] p-1 space-y-0.5">
+                      {PRELOADED_MODIFIERS.map((modifier) => {
+                        const isSelected =
+                          form.modifiers
+                            .split(",")
+                            .map((m) => m.trim())
+                            .filter(Boolean)
+                            .includes(modifier.code);
+
+                        return (
+                          <button
+                            key={modifier.code}
+                            type="button"
+                            onClick={() => toggleModifierCode(modifier.code)}
+                            title={modifier.label}
+                            className={`flex w-full items-start gap-2 rounded-[10px] px-2 py-1 text-left text-[11px] transition ${
+                              isSelected
+                                ? "border border-[#00C2D1] bg-[#16232A] text-[#DDE7F5] font-semibold"
+                                : "border border-transparent text-[#9AA4B2] hover:bg-[#111820] hover:text-[#DDE7F5]"
+                            }`}
+                          >
+                            <span className="font-mono whitespace-nowrap">
+                              [{modifier.code}]
+                            </span>
+                            <span className="truncate text-[10px]">
+                              {modifier.label}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div>
+                    <FieldLabel>Extra Diagnostic Notes</FieldLabel>
+                    <TextArea
+                      rows={1}
+                      value={form.extraNotes}
+                      onChange={(e) => updateField("extraNotes", e.target.value)}
+                      placeholder="Anaesthesia notes or system audit details..."
+                    />
+                  </div>
+                </form>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 border-t border-[#232A33] pt-3">
+                <button
+                  onClick={() => handlePersistClaim("captured")}
+                  disabled={isSaving}
+                  className="rounded-[10px] border border-[#00C2D1] bg-[#14181F] py-2.5 text-xs font-semibold uppercase tracking-[0.8px] text-[#00C2D1] transition hover:bg-[#16232A] disabled:opacity-50"
+                >
+                  {isSaving ? "Submitting…" : "Submit Claim"}
+                </button>
+
+                <button
+                  onClick={() => handlePersistClaim("on_hold")}
+                  disabled={isSaving}
+                  className="rounded-[10px] border border-[#735A22] bg-[#14181F] py-2.5 text-xs font-semibold uppercase tracking-[0.8px] text-[#E7B75B] transition hover:bg-[#2A2315] disabled:opacity-50"
+                >
+                  Hold Case
+                </button>
+              </div>
+            </AppCard>
           </section>
 
-          {/* ── RIGHT: Financial pack + tickets ───────────────────────────── */}
           <aside className="xl:col-span-2 flex flex-col gap-4">
-
-            {/* Financial Pack Section */}
-            <div className={`p-4 ${cardClassName}`}>
-              <div className="mb-2.5 flex items-center justify-between border-b border-cyan-500/20 pb-1">
-                <h3 className="text-xs font-black uppercase tracking-wider text-white">Live Financial Pack</h3>
-                <span className="text-[10px] font-mono text-cyan-400/70">MTD METRICS</span>
-              </div>
-              <div className="grid grid-cols-3 gap-2">
-                <div className="rounded border border-cyan-500/20 bg-black p-2 text-center">
-                  <span className="block text-[9px] font-bold uppercase tracking-wider text-slate-400">Volume</span>
-                  <span className="mt-0.5 block font-mono text-lg font-black text-white">{totalClaimsCount ?? "0"}</span>
-                </div>
-                <div className="rounded border border-cyan-400 bg-black p-2 text-center shadow-[0_0_10px_rgba(6,182,212,0.1)]">
-                  <span className="block text-[9px] font-bold uppercase tracking-wider text-cyan-400">ZAR Revenue</span>
-                  <span className="mt-0.5 block font-mono text-lg font-black text-cyan-400">R {valueBilledTotal?.toLocaleString() ?? "0"}</span>
-                </div>
-                <div className="rounded border border-cyan-500/20 bg-black p-2 text-center">
-                  <span className="block text-[9px] font-bold uppercase tracking-wider text-slate-400">Bureau Rate</span>
-                  <span className="mt-0.5 block font-mono text-lg font-black text-white">{practiceSuccessRate ?? "100"}%</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Audit / Chat Adjudication Section */}
-            <div className={`flex-1 flex flex-col overflow-hidden max-h-[440px] ${cardClassName}`}>
-              <div className="border-b border-cyan-500/20 pb-2 bg-black">
-                <h3 className="text-xs font-black uppercase tracking-wider text-white">Adjudication Tickets</h3>
-                <p className="text-[9px] font-mono text-cyan-600/80 uppercase">Real-time chat with billing consultants</p>
+            <AppCard>
+              <div className="mb-2.5 flex items-center justify-between border-b border-[#232A33] pb-1">
+                <SectionTitle className="mb-0">
+                  Live Financial Pack
+                </SectionTitle>
+                <span className="text-[10px] font-medium uppercase tracking-[0.8px] text-[#6C7A89]">
+                  MTD Metrics
+                </span>
               </div>
 
-              <div className="flex-1 grid grid-cols-3 overflow-hidden min-h-0 pt-2">
-                {/* Ticket Items Side-list */}
-                <ul className="col-span-1 border-r border-cyan-500/20 divide-y divide-cyan-950 overflow-y-auto bg-black pr-1">
+              <div className="grid grid-cols-3 gap-3">
+                <MetricTile
+                  label="Volume"
+                  value={totalClaimsCount ?? 0}
+                  emphasis="accent"
+                />
+                <MetricTile
+                  label="Revenue"
+                  value={`R ${valueBilledTotal?.toLocaleString() ?? 0}`}
+                  emphasis="primary"
+                />
+                <MetricTile
+                  label="Bureau Rate"
+                  value={`${practiceSuccessRate ?? 100}%`}
+                  emphasis="success"
+                />
+              </div>
+            </AppCard>
+
+            <AppCard className="flex-1 flex flex-col overflow-hidden max-h-[440px]">
+              <div className="border-b border-[#232A33] pb-2">
+                <SectionTitle className="mb-0">
+                  Adjudication Tickets
+                </SectionTitle>
+                <p className="text-[9px] uppercase tracking-[0.6px] text-[#6C7A89]">
+                  Real-time chat with billing consultants
+                </p>
+              </div>
+
+              <div className="min-h-0 flex-1 grid grid-cols-3 overflow-hidden pt-2">
+                <ul className="col-span-1 overflow-y-auto border-r border-[#232A33] pr-1 space-y-1">
                   {liveTickets.length === 0 && (
-                    <li className="p-2 text-[10px] text-cyan-900 font-mono italic">NO OPEN TICKETS</li>
-                  )}
-                  {liveTickets.map(t => (
-                    <li
-                      key={t.id}
-                      onClick={() => setSelectedTicketId(t.id)}
-                      className={`cursor-pointer p-2 text-[11px] flex flex-col gap-0.5 rounded transition ${selectedTicketId === t.id ? "bg-cyan-950/40 border border-cyan-400 text-cyan-300" : "border border-transparent text-slate-400 hover:text-slate-200"}`}
-                    >
-                      <span className={`font-bold truncate ${t.status === "urgent" ? "text-red-400" : ""}`}>{t.subject}</span>
-                      <span className="font-mono text-[9px] text-cyan-600 uppercase tracking-tight truncate">{t.medical_aid || "General Case"}</span>
+                    <li className="p-2 text-[10px] italic text-[#6C7A89]">
+                      NO OPEN TICKETS
                     </li>
+                  )}
+
+                  {liveTickets.map((ticket) => (
+                    <TicketListItem
+                      key={ticket.id}
+                      active={selectedTicketId === ticket.id}
+                      title={
+                        <span
+                          className={
+                            ticket.status === "urgent" ? "text-red-400" : ""
+                          }
+                        >
+                          {ticket.subject}
+                        </span>
+                      }
+                      subtitle={ticket.medical_aid || "General Case"}
+                      onClick={() => setSelectedTicketId(ticket.id)}
+                    />
                   ))}
                 </ul>
 
-                {/* Message Thread Panel */}
-                <div className="col-span-2 flex flex-col overflow-hidden bg-black pl-2">
+                <div className="col-span-2 flex flex-col overflow-hidden pl-2">
                   {selectedTicketId ? (
                     <>
-                      <div className="flex gap-2 border-b border-cyan-500/20 pb-2">
+                      <div className="flex gap-2 border-b border-[#232A33] pb-2">
                         <button
                           onClick={handlePingOffice}
-                          className="flex-1 rounded border border-amber-500/50 bg-black py-1 text-[10px] font-black uppercase tracking-wider text-amber-400 transition hover:bg-amber-950/20"
+                          className="flex-1 rounded-[10px] border border-[#735A22] bg-[#14181F] py-1 text-[10px] font-semibold uppercase tracking-[0.8px] text-[#E7B75B] transition hover:bg-[#2A2315]"
                         >
                           ⚡ Ping Office
                         </button>
+
                         <button
                           onClick={handleMarkTicketComplete}
-                          className="flex-1 rounded border border-cyan-400 bg-black py-1 text-[10px] font-black uppercase tracking-wider text-cyan-400 transition hover:bg-cyan-950/30"
+                          className="flex-1 rounded-[10px] border border-[#00C2D1] bg-[#14181F] py-1 text-[10px] font-semibold uppercase tracking-[0.8px] text-[#00C2D1] transition hover:bg-[#16232A]"
                         >
                           ✓ Resolved
                         </button>
                       </div>
 
-                      <div className="flex-1 flex flex-col space-y-2 overflow-y-auto py-2 pr-1 text-xs">
-                        {ticketMessages.map(m => {
-                          const isMe = m.sender_role === "practitioner";
-                          return (
-                            <div
-                              key={m.id}
-                              className={`max-w-[90%] rounded p-2 flex flex-col border ${isMe
-                                ? "self-end border-cyan-400/40 bg-cyan-950/20 text-cyan-300"
-                                : "self-start border-cyan-900 bg-black text-slate-300"
-                                }`}
-                            >
-                              <span className="leading-normal font-medium">{m.message}</span>
-                              <span className="mt-0.5 self-end font-mono text-[8px] opacity-60">
-                                {new Date(m.created_at).toLocaleTimeString("en-ZA", { hour: "2-digit", minute: "2-digit" })}
-                              </span>
-                            </div>
-                          );
-                        })}
+                      <div className="flex-1 space-y-2 overflow-y-auto py-2 pr-1 text-xs">
+                        {ticketMessages.map((message) => (
+                          <MessageBubble
+                            key={message.id}
+                            isMine={message.sender_role === "practitioner"}
+                            timestamp={new Date(message.created_at).toLocaleTimeString(
+                              "en-ZA",
+                              {
+                                hour: "2-digit",
+                                minute: "2-digit",
+                              }
+                            )}
+                          >
+                            {message.message}
+                          </MessageBubble>
+                        ))}
                       </div>
 
-                      <form onSubmit={handleSendChatReply} className="flex border-t border-cyan-500/20 pt-2">
+                      <form
+                        onSubmit={handleSendChatReply}
+                        className="flex border-t border-[#232A33] pt-2"
+                      >
                         <input
                           type="text"
                           value={chatReplyInput}
-                          onChange={e => setChatReplyInput(e.target.value)}
+                          onChange={(e) => setChatReplyInput(e.target.value)}
                           placeholder="Type a message…"
-                          className="flex-1 bg-black text-xs text-cyan-400 placeholder:text-cyan-900 outline-none pr-2 font-semibold"
+                          className="flex-1 bg-transparent pr-2 text-xs font-medium text-[#E8F1FF] outline-none placeholder:text-[#6C7A89]"
                         />
-                        <button type="submit" className="rounded border border-cyan-400 bg-black px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-cyan-400 hover:bg-cyan-950/30">Send</button>
+                        <button
+                          type="submit"
+                          className="rounded-[10px] border border-[#00C2D1] bg-[#14181F] px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.8px] text-[#00C2D1] hover:bg-[#16232A]"
+                        >
+                          Send
+                        </button>
                       </form>
                     </>
                   ) : (
-                    <div className="flex flex-1 items-center justify-center text-center p-4">
-                      <p className="text-[10px] font-mono text-cyan-900 uppercase">Select an active adjudication thread to view details.</p>
+                    <div className="flex flex-1 items-center justify-center p-4 text-center">
+                      <p className="text-[10px] uppercase tracking-[0.8px] text-[#6C7A89]">
+                        Select an active adjudication thread to view details.
+                      </p>
                     </div>
                   )}
                 </div>
               </div>
-            </div>
+            </AppCard>
           </aside>
         </div>
-      </div>
-    </div>
+      </ContentShell>
+    </AppShell>
   );
 }
