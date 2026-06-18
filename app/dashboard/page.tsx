@@ -111,7 +111,7 @@ const PRELOADED_MODIFIERS: ModifierOption[] = [
   { code: "5448", label: "Orthopedic Modifier (Sternum)" },
   { code: "0109", label: "Hospital Follow up" },
   { code: "1204", label: "ICU care" },
-  { code: "0007", label: "TCI" },
+  { code: "0007", text: "TCI", label: "TCI" },
   { code: "1215", label: "A-line" },
   { code: "1218", label: "CVP" },
   { code: "1220", label: "Hire fee PCA" },
@@ -127,37 +127,15 @@ const PRELOADED_MODIFIERS: ModifierOption[] = [
   { code: "5103 + 0083", label: "Ultrasound" },
 ];
 
-// ─── Design tokens ────────────────────────────────────────────────────────────
-// Base: near-black #080c10 with a cool steel-blue undertone
-// Accent: electric teal #00d4c8 (active/highlight)
-// Signal amber: #f59e0b (hold/warn)
-// Signal red: #ef4444 (errors/exit)
-// Card surface: slate-900/60 with hairline border slate-800
-// Header brand line: hot magenta #e91e8c  ←  the single bold risk
-// ─────────────────────────────────────────────────────────────────────────────
-
+// ─── Surgical Clean Styling Tokens ───────────────────────────────────────────
 const cardClassName =
-  "rounded-md border border-slate-800/80 bg-slate-900/50 shadow-[0_20px_60px_rgba(0,0,0,0.45)] backdrop-blur-sm";
+  "rounded border border-cyan-500/40 bg-black p-5 shadow-[0_10px_40px_rgba(0,0,0,0.9)]";
 
 const inputClassName =
-  "w-full rounded-md border border-slate-700/70 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 outline-none transition focus:border-teal-400/80 focus:ring-1 focus:ring-teal-400/30";
+  "w-full rounded border border-cyan-400 bg-black px-3 py-1.5 text-sm font-bold text-cyan-400 placeholder:text-cyan-900 outline-none transition focus:border-cyan-300 focus:ring-1 focus:ring-cyan-300/20 min-h-[36px] [color-scheme:dark]";
 
 const labelClassName =
-  "mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400";
-
-// ─── Stat card subcomponent ───────────────────────────────────────────────────
-function StatCard({ label, value, accent }: { label: string; value: string; accent?: string }) {
-  return (
-    <div className="relative overflow-hidden rounded-md border border-slate-800 bg-slate-950/60 p-3 text-center">
-      {/* subtle left accent bar */}
-      <div className={`absolute left-0 top-0 h-full w-0.5 ${accent ?? "bg-teal-500"}`} />
-      <span className="block text-[9px] font-bold uppercase tracking-[0.15em] text-slate-500">{label}</span>
-      <span className={`mt-1 block font-mono text-xl font-extrabold ${accent ? "" : "text-white"}`}
-        style={accent ? { color: accent === "bg-teal-500" ? "#2dd4bf" : accent === "bg-amber-500" ? "#f59e0b" : "#e2e8f0" } : {}}
-      >{value}</span>
-    </div>
-  );
-}
+  "mb-1 block text-[11px] font-bold uppercase tracking-wider text-slate-200";
 
 export default function DashboardPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -193,7 +171,6 @@ export default function DashboardPage() {
 
   const supabase = createClient();
 
-  // Auto-calculate BMI
   useEffect(() => {
     const bmi = calculateBMI(form.weight, form.height);
     setForm(p => ({ ...p, bmiInfo: bmi }));
@@ -481,95 +458,47 @@ export default function DashboardPage() {
 
   const bmiMeta = useMemo(() => {
     const val = parseFloat(form.bmiInfo);
-    if (!val) return { label: "", color: "text-slate-500" };
-    if (val < 18.5) return { label: "Underweight", color: "text-blue-400" };
-    if (val < 25) return { label: "Normal", color: "text-teal-400" };
+    if (!val) return { label: "", color: "text-slate-400" };
+    if (val < 18.5) return { label: "Underweight", color: "text-cyan-400" };
+    if (val < 25) return { label: "Normal", color: "text-cyan-400" };
     if (val < 30) return { label: "Overweight", color: "text-amber-400" };
-    return { label: "Obese", color: "text-red-400" };
+    return { label: "Obese", color: "text-red-500" };
   }, [form.bmiInfo]);
 
-  // ─── Render ─────────────────────────────────────────────────────────────────
   return (
-    <div className="relative min-h-screen bg-[#080c10] text-slate-100 flex flex-col font-sans">
-
-      {/* Ambient background glow */}
-      <div
-        aria-hidden
-        className="pointer-events-none fixed inset-0"
-        style={{
-          background:
-            "radial-gradient(ellipse 80% 40% at 50% 0%, rgba(0,212,200,0.09) 0%, transparent 70%), radial-gradient(ellipse 40% 30% at 90% 10%, rgba(233,30,140,0.05) 0%, transparent 60%)"
-        }}
-      />
-
-      <div className="relative mx-auto w-full max-w-[1720px] px-5 py-5 flex-1 flex flex-col gap-5">
+    <div className="relative min-h-screen bg-black text-slate-100 flex flex-col font-sans antialiased selection:bg-cyan-500/30">
+      <div className="relative mx-auto w-full max-w-[1720px] px-4 py-4 flex-1 flex flex-col gap-4">
 
         {/* ── HEADER ────────────────────────────────────────────────────────── */}
-        <header className="flex flex-col gap-0 sm:flex-row sm:items-center sm:justify-between border-b border-slate-800/80 pb-4">
-
-          {/* Left: Brand + practitioner identity */}
-          <div className="flex flex-col gap-1">
-
-            {/* App name — the bold brand moment */}
-            <div className="flex items-baseline gap-2.5">
-              {/* Magenta accent dot */}
-              <span
-                className="inline-block w-2 h-2 rounded-full flex-shrink-0"
-                style={{ background: "#e91e8c", boxShadow: "0 0 8px 2px rgba(233,30,140,0.55)" }}
-              />
-              <span
-                className="text-[10px] font-bold tracking-[0.35em] uppercase"
-                style={{ color: "#e91e8c" }}
-              >
-                by MediBurgh
-              </span>
+        <header className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between border-b border-cyan-500/20 pb-3">
+          <div className="flex flex-col gap-0.5">
+            <div className="flex items-baseline gap-2">
+              <span className="inline-block w-1.5 h-1.5 rounded-full bg-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.8)]" />
+              <span className="text-[10px] font-bold tracking-[0.2em] uppercase text-cyan-400">by MediBurgh</span>
             </div>
-
-            <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-white leading-none uppercase">
-              The Doc Log
-            </h1>
-
-            {/* Practitioner identity strip */}
-            {providerProfile ? (
-              <div className="mt-2 flex flex-wrap items-center gap-2">
-                {/* Avatar initial badge */}
-                <div
-                  className="flex h-8 w-8 items-center justify-center rounded-full text-[11px] font-black text-white flex-shrink-0"
-                  style={{ background: "linear-gradient(135deg, #00d4c8 0%, #007a74 100%)" }}
-                >
-                  {providerProfile.title_name_surname.replace(/^Dr\s+/i, "").charAt(0).toUpperCase()}
-                </div>
-                <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 font-mono text-[11px]">
-                  <span className="font-bold text-teal-300">{providerProfile.title_name_surname}</span>
-                  <span className="text-slate-700">|</span>
-                  <span
-                    className="rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-widest"
-                    style={{ background: "rgba(0,212,200,0.1)", color: "#00d4c8", border: "1px solid rgba(0,212,200,0.25)" }}
-                  >
-                    {providerProfile.pr_number}
-                  </span>
-                  <span className="text-slate-700">|</span>
-                  <span className="text-slate-400">{providerProfile.specialty}</span>
-                </div>
+            <h1 className="text-2xl font-black tracking-tight text-white uppercase">The Doc Log</h1>
+            
+            {providerProfile && (
+              <div className="mt-1 flex items-center gap-2 font-mono text-[11px] text-slate-400">
+                <span className="font-bold text-cyan-400">{providerProfile.title_name_surname}</span>
+                <span>•</span>
+                <span className="border border-cyan-500/30 px-1 rounded text-[10px] text-cyan-300 bg-cyan-950/20">{providerProfile.pr_number}</span>
+                <span>•</span>
+                <span>{providerProfile.specialty}</span>
               </div>
-            ) : (
-              <div className="mt-2 h-5 w-48 animate-pulse rounded bg-slate-800" />
             )}
           </div>
 
-          {/* Right: Session counters + exit */}
-          <div className="flex items-center gap-2 mt-3 sm:mt-0 font-mono text-xs flex-shrink-0">
-            <div className="flex items-center gap-1.5 rounded-md border border-teal-500/25 bg-teal-950/30 px-3 py-2 text-teal-400">
-              <span className="h-1.5 w-1.5 rounded-full bg-teal-400 animate-pulse" />
-              SUBMITTED: <span className="font-black">{submittedCount}</span>
+          <div className="flex items-center gap-2 font-mono text-xs">
+            <div className="rounded border border-cyan-500/30 bg-black px-3 py-1.5 text-cyan-400 font-bold">
+              SUBMITTED: <span>{submittedCount}</span>
             </div>
-            <div className="flex items-center gap-1.5 rounded-md border border-amber-500/25 bg-amber-950/30 px-3 py-2 text-amber-400">
-              <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
-              HELD: <span className="font-black">{holdCount}</span>
+            <div className="rounded border border-amber-500/30 bg-black px-3 py-1.5 text-amber-400 font-bold">
+              HELD: <span>{holdCount}</span>
             </div>
             <button
               onClick={() => window.location.href = "/"}
-              className="rounded-md border border-red-500/30 bg-red-950/40 px-4 py-2 font-sans text-[11px] font-bold uppercase tracking-widest text-red-400 transition hover:bg-red-900/40 hover:border-red-400/50"
+              className="rounded border border-red-500/40 bg-black px-4 py-1.5 text-[11px] font-bold uppercase tracking-wider text-red-400 transition hover:bg-red-950/20"
             >
               Exit
             </button>
@@ -577,16 +506,19 @@ export default function DashboardPage() {
         </header>
 
         {/* ── MAIN GRID ─────────────────────────────────────────────────────── */}
-        <div className="grid grid-cols-1 xl:grid-cols-5 gap-5 flex-1">
+        <div className="grid grid-cols-1 xl:grid-cols-5 gap-4 flex-1">
 
           {/* ── LEFT: Claim capture form ──────────────────────────────────── */}
-          <section className={`xl:col-span-3 p-5 space-y-4 ${cardClassName}`}>
+          <section className={`xl:col-span-3 space-y-4 ${cardClassName}`}>
+            <div className="border-b border-cyan-500/20 pb-2 mb-2 flex items-center justify-between">
+              <h2 className="text-xs font-black uppercase tracking-wider text-white">Primary Billing Sheet</h2>
+              <span className="text-[10px] font-mono text-cyan-400/70">CASE CAPTURE PANEL</span>
+            </div>
 
-            {/* Warnings */}
             {medicalAidWarnings.length > 0 && (
-              <div className="rounded-md border border-amber-500/30 bg-amber-950/20 p-3 space-y-1.5">
+              <div className="rounded border border-amber-500/30 bg-black p-3 space-y-1">
                 {medicalAidWarnings.map((w, idx) => (
-                  <p key={idx} className="flex gap-2 text-[11px] font-medium text-amber-300/90">
+                  <p key={idx} className="flex gap-2 text-[11px] text-amber-400">
                     <span>⚠️</span><span>{w}</span>
                   </p>
                 ))}
@@ -594,31 +526,30 @@ export default function DashboardPage() {
             )}
 
             {error && (
-              <div className="rounded-md border border-red-500/40 bg-red-950/30 px-4 py-2.5 text-[11px] text-red-300">
+              <div className="rounded border border-red-500/40 bg-black px-3 py-2 text-[11px] text-red-400 font-bold">
                 {error}
               </div>
             )}
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-
-              {/* Image uploads */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              
+              {/* Image Upload Block */}
               <div className="space-y-3">
                 {!imagePreviewUrl ? (
                   <div
                     onClick={() => fileInputRef.current?.click()}
-                    className="flex min-h-[210px] cursor-pointer flex-col items-center justify-center rounded-md border-2 border-dashed border-slate-700/60 bg-slate-950/40 p-4 text-center transition hover:border-teal-500/50 hover:bg-slate-950/60"
+                    className="flex min-h-[180px] cursor-pointer flex-col items-center justify-center rounded border border-cyan-500/30 bg-black p-4 text-center transition hover:border-cyan-400 hover:shadow-[0_0_15px_rgba(6,182,212,0.1)]"
                   >
-                    {/* Upload icon */}
-                    <svg className="mb-2 h-8 w-8 text-slate-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <svg className="mb-2 h-6 w-6 text-cyan-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
                     </svg>
-                    <p className="text-sm font-semibold text-slate-400">Capture Primary Billing Sheet</p>
-                    <p className="mt-1 text-xs text-slate-600">PNG, JPEG, or camera</p>
+                    <p className="text-xs font-bold text-slate-200 uppercase tracking-wider">Capture Primary Billing Sheet</p>
+                    <p className="mt-0.5 text-[10px] text-cyan-600/80 font-mono">PNG, JPEG, OR CAMERA</p>
                   </div>
                 ) : (
-                  <div className="relative rounded-md border border-slate-800 bg-slate-950 p-2">
-                    <img src={imagePreviewUrl} className="max-h-[210px] w-full rounded object-contain mx-auto" alt="Primary Billing Sheet" />
-                    <button onClick={clearImage} className="absolute top-3 right-3 rounded bg-red-600 px-2 py-1 text-[10px] font-bold uppercase text-white hover:bg-red-500">Remove</button>
+                  <div className="relative rounded border border-cyan-500/30 bg-black p-2">
+                    <img src={imagePreviewUrl} className="max-h-[180px] w-full rounded object-contain mx-auto" alt="Primary Billing Sheet" />
+                    <button onClick={clearImage} className="absolute top-2 right-2 rounded bg-red-950 border border-red-500 text-red-400 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider">Remove</button>
                   </div>
                 )}
                 <input ref={fileInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleFileChange} />
@@ -626,23 +557,22 @@ export default function DashboardPage() {
                 {!extraImagePreviewUrl ? (
                   <div
                     onClick={() => extraFileInputRef.current?.click()}
-                    className="flex min-h-[130px] cursor-pointer flex-col items-center justify-center rounded-md border border-dashed border-slate-800 bg-slate-950/20 p-3 text-center transition hover:border-teal-500/30"
+                    className="flex min-h-[100px] cursor-pointer flex-col items-center justify-center rounded border border-cyan-500/20 bg-black p-3 text-center transition hover:border-cyan-500/40"
                   >
-                    <p className="text-sm font-medium text-slate-500">+ Add Supporting Document</p>
-                    <p className="mt-0.5 text-xs text-slate-700">Allocation sheet or secondary attachment</p>
+                    <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">+ Add Supporting Document</p>
+                    <p className="mt-0.5 text-[9px] text-cyan-700 font-mono">ALLOCATION SHEET / REPORT ATTACHMENT</p>
                   </div>
                 ) : (
-                  <div className="relative rounded-md border border-slate-800 bg-slate-950 p-2">
-                    <img src={extraImagePreviewUrl} className="max-h-[130px] w-full rounded object-contain mx-auto" alt="Supporting Document" />
-                    <button onClick={clearExtraImage} className="absolute top-3 right-3 rounded bg-red-600 px-2 py-1 text-[10px] font-bold uppercase text-white hover:bg-red-500">Remove</button>
+                  <div className="relative rounded border border-cyan-500/20 bg-black p-2">
+                    <img src={extraImagePreviewUrl} className="max-h-[100px] w-full rounded object-contain mx-auto" alt="Supporting Document" />
+                    <button onClick={clearExtraImage} className="absolute top-2 right-2 rounded bg-red-950 border border-red-500 text-red-400 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider">Remove</button>
                   </div>
                 )}
                 <input ref={extraFileInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleExtraFileChange} />
               </div>
 
-              {/* Form fields */}
+              {/* Input Form Fields */}
               <form onSubmit={e => e.preventDefault()} className="space-y-3">
-
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className={labelClassName}>Patient Name</label>
@@ -657,7 +587,7 @@ export default function DashboardPage() {
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className={labelClassName}>Billing Rate</label>
-                    <select value={form.billingRate} onChange={e => updateField("billingRate", e.target.value)} className={`${inputClassName} bg-slate-950`}>
+                    <select value={form.billingRate} onChange={e => updateField("billingRate", e.target.value)} className={`${inputClassName} [color-scheme:dark]`}>
                       <option value="Practice Profile">Practice Profile</option>
                       <option value="Medical aid rates, No Copay">Medical aid rates, No Copay</option>
                       <option value="International/Private">International/Private</option>
@@ -674,28 +604,28 @@ export default function DashboardPage() {
                   <input type="text" value={form.procedureDescription} onChange={e => updateField("procedureDescription", e.target.value)} className={inputClassName} placeholder="Surgical description..." />
                 </div>
 
-                {/* ICD-10 search */}
+                {/* ICD-10 Search Box */}
                 <div ref={icdSearchRef} className="relative">
-                  <label className={`${labelClassName} text-teal-400`}>
-                    ICD-10 Diagnostic Search <span className="text-teal-500">*</span>
+                  <label className={`${labelClassName} text-cyan-300 font-black`}>
+                    ICD-10 Diagnostic Search <span className="text-cyan-400">*</span>
                   </label>
                   <input
                     type="text"
                     value={icdSearch}
                     onFocus={() => setIcdDropdownOpen(true)}
                     onChange={e => setIcdSearch(e.target.value)}
-                    className={`${inputClassName} border-teal-900/60 focus:border-teal-400/80`}
+                    className={`${inputClassName} border-cyan-400`}
                     placeholder="Search diagnostic classifications..."
                   />
                   {icdDropdownOpen && filteredIcdCodes.length > 0 && (
-                    <ul className="absolute z-20 mt-1 max-h-40 w-full overflow-y-auto rounded-md border border-slate-800 bg-slate-950 divide-y divide-slate-900/80 shadow-2xl">
+                    <ul className="absolute z-20 mt-1 max-h-40 w-full overflow-y-auto rounded border border-cyan-400 bg-black divide-y divide-cyan-950 shadow-2xl">
                       {filteredIcdCodes.map((i, idx) => {
                         const code = i?.ICD10CODE || "";
                         const desc = i?.["DESCRIPTION\r"] || "";
                         return (
-                          <li key={code || idx} onClick={() => selectIcdCode({ code, description: desc })} className="flex cursor-pointer items-center justify-between gap-3 px-3 py-2 text-xs transition hover:bg-slate-900">
-                            <span className="font-mono font-bold text-teal-400 whitespace-nowrap">{code || "N/A"}</span>
-                            <span className="truncate text-slate-400">{desc}</span>
+                          <li key={code || idx} onClick={() => selectIcdCode({ code, description: desc })} className="flex cursor-pointer items-center justify-between gap-3 px-3 py-1.5 text-xs transition hover:bg-cyan-950/40">
+                            <span className="font-mono font-bold text-cyan-400 whitespace-nowrap">{code || "N/A"}</span>
+                            <span className="truncate text-slate-300">{desc}</span>
                           </li>
                         );
                       })}
@@ -703,24 +633,24 @@ export default function DashboardPage() {
                   )}
                 </div>
 
-                {/* Date & time row */}
-                <div className="grid grid-cols-3 gap-2 border-t border-slate-800/70 pt-3">
+                {/* Date & Time Selection (STRICT ORIGINAL 3-COLUMN MAPPING) */}
+                <div className="grid grid-cols-3 gap-2 border-t border-cyan-500/20 pt-2.5">
                   <div className="col-span-3 sm:col-span-1">
                     <label className={labelClassName}>Theatre Date</label>
                     <input type="date" value={form.theatreDate} onChange={e => updateField("theatreDate", e.target.value)} className={inputClassName} />
                   </div>
                   <div>
-                    <label className={`${labelClassName} text-teal-400`}>Start Clock <span className="text-teal-500">*</span></label>
-                    <input type="time" value={form.theatreStartTime} onChange={e => updateField("theatreStartTime", e.target.value)} className={`${inputClassName} border-teal-900/50`} />
+                    <label className={`${labelClassName} text-cyan-300`}>Start Clock <span className="text-cyan-400">*</span></label>
+                    <input type="time" value={form.theatreStartTime} onChange={e => updateField("theatreStartTime", e.target.value)} className={inputClassName} />
                   </div>
                   <div>
-                    <label className={`${labelClassName} text-teal-400`}>End Clock <span className="text-teal-500">*</span></label>
-                    <input type="time" value={form.theatreEndTime} onChange={e => updateField("theatreEndTime", e.target.value)} className={`${inputClassName} border-teal-900/50`} />
+                    <label className={`${labelClassName} text-cyan-300`}>End Clock <span className="text-cyan-400">*</span></label>
+                    <input type="time" value={form.theatreEndTime} onChange={e => updateField("theatreEndTime", e.target.value)} className={inputClassName} />
                   </div>
                 </div>
 
-                {/* BMI row */}
-                <div className="grid grid-cols-3 gap-2 border-t border-slate-800/70 pt-3">
+                {/* Patient Biometrics Block (STRICT ORIGINAL 3-COLUMN MAPPING) */}
+                <div className="grid grid-cols-3 gap-2 border-t border-cyan-500/20 pt-2.5">
                   <div>
                     <label className={labelClassName}>Weight (kg)</label>
                     <input type="number" min="0" step="0.1" value={form.weight} onChange={e => updateField("weight", e.target.value)} className={inputClassName} placeholder="75" />
@@ -731,23 +661,23 @@ export default function DashboardPage() {
                   </div>
                   <div>
                     <label className={labelClassName}>BMI</label>
-                    <div className={`${inputClassName} flex flex-col justify-center min-h-[38px]`}>
+                    <div className={`${inputClassName} flex flex-col justify-center`}>
                       {form.bmiInfo ? (
-                        <>
+                        <div className="flex items-baseline justify-between w-full">
                           <span className={`font-mono font-bold text-sm ${bmiMeta.color}`}>{form.bmiInfo}</span>
-                          <span className={`text-[9px] uppercase tracking-wider ${bmiMeta.color}`}>{bmiMeta.label}</span>
-                        </>
+                          <span className={`text-[8px] font-black uppercase tracking-wider ${bmiMeta.color}`}>{bmiMeta.label}</span>
+                        </div>
                       ) : (
-                        <span className="text-slate-600 text-xs">Auto</span>
+                        <span className="text-cyan-900 text-xs font-mono">AUTO</span>
                       )}
                     </div>
                   </div>
                 </div>
 
-                {/* Modifiers */}
+                {/* Modifiers List Block */}
                 <div>
                   <label className={labelClassName}>Modifiers Selector Block</label>
-                  <div className="max-h-36 overflow-y-auto rounded-md border border-slate-800 bg-slate-950 p-2 space-y-1 scrollbar-thin scrollbar-track-slate-950 scrollbar-thumb-slate-800">
+                  <div className="max-h-28 overflow-y-auto rounded border border-cyan-500/30 bg-black p-1 space-y-0.5 scrollbar-thin scrollbar-thumb-cyan-950">
                     {PRELOADED_MODIFIERS.map(m => {
                       const isSel = form.modifiers.includes(m.code);
                       return (
@@ -756,13 +686,13 @@ export default function DashboardPage() {
                           type="button"
                           onClick={() => toggleModifierCode(m.code)}
                           title={m.label}
-                          className={`flex w-full items-start gap-2 rounded px-2 py-1.5 text-left text-[11px] transition ${isSel
-                            ? "border border-teal-400/40 bg-teal-950/60 text-teal-300"
-                            : "border border-transparent bg-slate-900/50 text-slate-400 hover:bg-slate-900 hover:text-slate-200"
+                          className={`flex w-full items-start gap-2 rounded px-2 py-1 text-left text-[11px] transition ${isSel
+                            ? "border border-cyan-400 bg-cyan-950/40 text-cyan-300 font-bold"
+                            : "border border-transparent text-slate-400 hover:bg-cyan-950/20 hover:text-cyan-400"
                             }`}
                         >
-                          <span className="font-mono font-bold whitespace-nowrap">[{m.code}]</span>
-                          <span className="opacity-80 font-sans text-[10px] leading-tight">{m.label}</span>
+                          <span className="font-mono whitespace-nowrap">[{m.code}]</span>
+                          <span className="opacity-90 truncate font-sans text-[10px]">{m.label}</span>
                         </button>
                       );
                     })}
@@ -771,25 +701,24 @@ export default function DashboardPage() {
 
                 <div>
                   <label className={labelClassName}>Extra Diagnostic Notes</label>
-                  <textarea rows={2} value={form.extraNotes} onChange={e => updateField("extraNotes", e.target.value)} className={`${inputClassName} resize-none`} placeholder="Anaesthesia notes or system audit details..." />
+                  <textarea rows={1} value={form.extraNotes} onChange={e => updateField("extraNotes", e.target.value)} className={`${inputClassName} resize-none py-1`} placeholder="Anaesthesia notes or system audit details..." />
                 </div>
               </form>
             </div>
 
-            {/* CTA buttons */}
-            <div className="grid grid-cols-2 gap-3 border-t border-slate-800/80 pt-4">
+            {/* Action Buttons */}
+            <div className="grid grid-cols-2 gap-3 border-t border-cyan-500/20 pt-3">
               <button
                 onClick={() => handlePersistClaim("captured")}
                 disabled={isSaving}
-                className="relative overflow-hidden rounded-md py-3 text-xs font-bold uppercase tracking-widest text-white transition disabled:opacity-50"
-                style={{ background: "linear-gradient(135deg, #00a89e 0%, #006b68 100%)" }}
+                className="rounded border border-cyan-400 bg-black py-2.5 text-xs font-black uppercase tracking-widest text-cyan-400 transition hover:bg-cyan-950/30 disabled:opacity-50"
               >
                 {isSaving ? "Submitting…" : "Submit Claim"}
               </button>
               <button
                 onClick={() => handlePersistClaim("on_hold")}
                 disabled={isSaving}
-                className="rounded-md border border-amber-500/40 bg-amber-950/40 py-3 text-xs font-bold uppercase tracking-widest text-amber-300 transition hover:bg-amber-950/60 disabled:opacity-50"
+                className="rounded border border-amber-500/50 bg-black py-2.5 text-xs font-black uppercase tracking-widest text-amber-400 transition hover:bg-amber-950/20 disabled:opacity-50"
               >
                 Hold Case
               </button>
@@ -799,88 +728,85 @@ export default function DashboardPage() {
           {/* ── RIGHT: Financial pack + tickets ───────────────────────────── */}
           <aside className="xl:col-span-2 flex flex-col gap-4">
 
-            {/* Financial pack */}
+            {/* Financial Pack Section */}
             <div className={`p-4 ${cardClassName}`}>
-              <div className="mb-3 flex items-center justify-between">
-                <h3 className="text-[11px] font-bold uppercase tracking-[0.15em] text-slate-300">Live Financial Pack</h3>
-                <span className="text-[9px] font-mono text-slate-600 uppercase tracking-wider">MTD</span>
+              <div className="mb-2.5 flex items-center justify-between border-b border-cyan-500/20 pb-1">
+                <h3 className="text-xs font-black uppercase tracking-wider text-white">Live Financial Pack</h3>
+                <span className="text-[10px] font-mono text-cyan-400/70">MTD METRICS</span>
               </div>
               <div className="grid grid-cols-3 gap-2">
-                <div className="relative overflow-hidden rounded-md border border-slate-800 bg-slate-950/60 p-3 text-center">
-                  <div className="absolute left-0 top-0 h-full w-0.5 bg-slate-500" />
-                  <span className="block text-[9px] font-bold uppercase tracking-[0.15em] text-slate-500">Volume</span>
-                  <span className="mt-1 block font-mono text-xl font-extrabold text-white">{totalClaimsCount ?? "0"}</span>
+                <div className="rounded border border-cyan-500/20 bg-black p-2 text-center">
+                  <span className="block text-[9px] font-bold uppercase tracking-wider text-slate-400">Volume</span>
+                  <span className="mt-0.5 block font-mono text-lg font-black text-white">{totalClaimsCount ?? "0"}</span>
                 </div>
-                <div className="relative overflow-hidden rounded-md border border-teal-900/50 bg-slate-950/60 p-3 text-center">
-                  <div className="absolute left-0 top-0 h-full w-0.5 bg-teal-500" />
-                  <span className="block text-[9px] font-bold uppercase tracking-[0.15em] text-slate-500">ZAR Revenue</span>
-                  <span className="mt-1 block font-mono text-xl font-extrabold text-teal-400">R {valueBilledTotal?.toLocaleString() ?? "0"}</span>
+                <div className="rounded border border-cyan-400 bg-black p-2 text-center shadow-[0_0_10px_rgba(6,182,212,0.1)]">
+                  <span className="block text-[9px] font-bold uppercase tracking-wider text-cyan-400">ZAR Revenue</span>
+                  <span className="mt-0.5 block font-mono text-lg font-black text-cyan-400">R {valueBilledTotal?.toLocaleString() ?? "0"}</span>
                 </div>
-                <div className="relative overflow-hidden rounded-md border border-slate-800 bg-slate-950/60 p-3 text-center">
-                  <div className="absolute left-0 top-0 h-full w-0.5 bg-slate-400" />
-                  <span className="block text-[9px] font-bold uppercase tracking-[0.15em] text-slate-500">Bureau Rate</span>
-                  <span className="mt-1 block font-mono text-xl font-extrabold text-white">{practiceSuccessRate ?? "100"}%</span>
+                <div className="rounded border border-cyan-500/20 bg-black p-2 text-center">
+                  <span className="block text-[9px] font-bold uppercase tracking-wider text-slate-400">Bureau Rate</span>
+                  <span className="mt-0.5 block font-mono text-lg font-black text-white">{practiceSuccessRate ?? "100"}%</span>
                 </div>
               </div>
             </div>
 
-            {/* Interactive Adjudication Tickets */}
-            <div className={`flex-1 flex flex-col overflow-hidden max-h-[500px] ${cardClassName}`}>
-              <div className="border-b border-slate-800/80 px-4 py-3 bg-slate-950/40">
-                <h3 className="text-[11px] font-bold uppercase tracking-[0.15em] text-slate-200">Adjudication Tickets</h3>
-                <p className="mt-0.5 text-[10px] text-slate-500">Real-time chat with your billing consultants</p>
+            {/* Audit / Chat Adjudication Section */}
+            <div className={`flex-1 flex flex-col overflow-hidden max-h-[440px] ${cardClassName}`}>
+              <div className="border-b border-cyan-500/20 pb-2 bg-black">
+                <h3 className="text-xs font-black uppercase tracking-wider text-white">Adjudication Tickets</h3>
+                <p className="text-[9px] font-mono text-cyan-600/80 uppercase">Real-time chat with billing consultants</p>
               </div>
 
-              <div className="flex-1 grid grid-cols-3 overflow-hidden min-h-0">
-                {/* Ticket list */}
-                <ul className="col-span-1 border-r border-slate-800 divide-y divide-slate-900/60 overflow-y-auto bg-slate-950/20">
+              <div className="flex-1 grid grid-cols-3 overflow-hidden min-h-0 pt-2">
+                {/* Ticket Items Side-list */}
+                <ul className="col-span-1 border-r border-cyan-500/20 divide-y divide-cyan-950 overflow-y-auto bg-black pr-1">
                   {liveTickets.length === 0 && (
-                    <li className="p-3 text-[10px] text-slate-600 italic">No open tickets</li>
+                    <li className="p-2 text-[10px] text-cyan-900 font-mono italic">NO OPEN TICKETS</li>
                   )}
                   {liveTickets.map(t => (
                     <li
                       key={t.id}
                       onClick={() => setSelectedTicketId(t.id)}
-                      className={`cursor-pointer p-2.5 text-[11px] flex flex-col gap-0.5 transition hover:bg-slate-900/40 ${selectedTicketId === t.id ? "border-l-2 border-teal-500 bg-slate-950" : "border-l-2 border-transparent"}`}
+                      className={`cursor-pointer p-2 text-[11px] flex flex-col gap-0.5 rounded transition ${selectedTicketId === t.id ? "bg-cyan-950/40 border border-cyan-400 text-cyan-300" : "border border-transparent text-slate-400 hover:text-slate-200"}`}
                     >
-                      <span className={`font-semibold truncate ${t.status === "urgent" ? "text-red-400" : "text-slate-200"}`}>{t.subject}</span>
-                      <span className="font-mono text-[9px] uppercase tracking-wide text-slate-500 truncate">{t.medical_aid || "General Case"}</span>
+                      <span className={`font-bold truncate ${t.status === "urgent" ? "text-red-400" : ""}`}>{t.subject}</span>
+                      <span className="font-mono text-[9px] text-cyan-600 uppercase tracking-tight truncate">{t.medical_aid || "General Case"}</span>
                     </li>
                   ))}
                 </ul>
 
-                {/* Ticket thread */}
-                <div className="col-span-2 flex flex-col overflow-hidden bg-slate-950/30">
+                {/* Message Thread Panel */}
+                <div className="col-span-2 flex flex-col overflow-hidden bg-black pl-2">
                   {selectedTicketId ? (
                     <>
-                      <div className="flex gap-2 border-b border-slate-800/60 bg-slate-950/80 p-2">
+                      <div className="flex gap-2 border-b border-cyan-500/20 pb-2">
                         <button
                           onClick={handlePingOffice}
-                          className="flex-1 rounded border border-amber-500/30 bg-slate-900 px-2 py-1.5 text-[10px] font-bold uppercase tracking-wider text-amber-400 transition hover:bg-slate-800"
+                          className="flex-1 rounded border border-amber-500/50 bg-black py-1 text-[10px] font-black uppercase tracking-wider text-amber-400 transition hover:bg-amber-950/20"
                         >
                           ⚡ Ping Office
                         </button>
                         <button
                           onClick={handleMarkTicketComplete}
-                          className="flex-1 rounded border border-teal-500/30 bg-teal-950/50 px-2 py-1.5 text-[10px] font-bold uppercase tracking-wider text-teal-400 transition hover:bg-teal-900/40"
+                          className="flex-1 rounded border border-cyan-400 bg-black py-1 text-[10px] font-black uppercase tracking-wider text-cyan-400 transition hover:bg-cyan-950/30"
                         >
                           ✓ Resolved
                         </button>
                       </div>
 
-                      <div className="flex-1 flex flex-col space-y-2 overflow-y-auto p-3 text-xs">
+                      <div className="flex-1 flex flex-col space-y-2 overflow-y-auto py-2 pr-1 text-xs">
                         {ticketMessages.map(m => {
                           const isMe = m.sender_role === "practitioner";
                           return (
                             <div
                               key={m.id}
-                              className={`max-w-[88%] rounded-md p-2.5 flex flex-col ${isMe
-                                ? "self-end border border-teal-500/20 bg-teal-950/40 text-teal-100"
-                                : "self-start border border-slate-800 bg-slate-900 text-slate-300"
+                              className={`max-w-[90%] rounded p-2 flex flex-col border ${isMe
+                                ? "self-end border-cyan-400/40 bg-cyan-950/20 text-cyan-300"
+                                : "self-start border-cyan-900 bg-black text-slate-300"
                                 }`}
                             >
-                              <span className="leading-relaxed">{m.message}</span>
-                              <span className="mt-1 self-end font-mono text-[8px] text-slate-500">
+                              <span className="leading-normal font-medium">{m.message}</span>
+                              <span className="mt-0.5 self-end font-mono text-[8px] opacity-60">
                                 {new Date(m.created_at).toLocaleTimeString("en-ZA", { hour: "2-digit", minute: "2-digit" })}
                               </span>
                             </div>
@@ -888,20 +814,20 @@ export default function DashboardPage() {
                         })}
                       </div>
 
-                      <form onSubmit={handleSendChatReply} className="flex border-t border-slate-800/80 bg-slate-950/80 p-2">
+                      <form onSubmit={handleSendChatReply} className="flex border-t border-cyan-500/20 pt-2">
                         <input
                           type="text"
                           value={chatReplyInput}
                           onChange={e => setChatReplyInput(e.target.value)}
                           placeholder="Type a message…"
-                          className="flex-1 bg-transparent px-2 text-xs text-slate-100 placeholder:text-slate-600 outline-none"
+                          className="flex-1 bg-black text-xs text-cyan-400 placeholder:text-cyan-900 outline-none pr-2 font-semibold"
                         />
-                        <button type="submit" className="rounded bg-teal-600 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-white hover:bg-teal-500 transition">Send</button>
+                        <button type="submit" className="rounded border border-cyan-400 bg-black px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-cyan-400 hover:bg-cyan-950/30">Send</button>
                       </form>
                     </>
                   ) : (
-                    <div className="flex flex-1 items-center justify-center p-6 text-center">
-                      <p className="text-xs italic text-slate-600">Select an open billing alert to join the audit thread.</p>
+                    <div className="flex flex-1 items-center justify-center text-center p-4">
+                      <p className="text-[10px] font-mono text-cyan-900 uppercase">Select an active adjudication thread to view details.</p>
                     </div>
                   )}
                 </div>
