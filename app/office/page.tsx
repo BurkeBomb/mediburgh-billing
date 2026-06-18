@@ -8,12 +8,16 @@ interface ClaimRecord {
   created_at: string;
   procedure_description: string;
   icd10_code: string | null;
-  status: "captured" | "on_hold" | "billed";
+  theatre_start_time: string | null;
+  theatre_end_time: string | null;
+  bmi_info: number | null;
+  modifiers: string[];
+  extra_notes: string;
   image_url: string | null;
   extra_image_url: string | null;
-  extra_notes: string;
-  billed_amount?: number;
-  practitioner_profiles?: {
+  status: "captured" | "on_hold" | "billed";
+  practitioner_id: string;
+  profiles?: {
     title_name_surname: string;
     pr_number: string;
     specialty: string;
@@ -25,72 +29,73 @@ interface TicketThread {
   subject: string;
   status: "open" | "closed" | "urgent";
   updated_at: string;
-  medical_aid?: string;
   practitioner_id: string;
+  medical_aid?: string;
+  profiles?: {
+    title_name_surname: string;
+  };
 }
 
 interface TicketMessage {
   id: string;
-  ticket_id: string;
   message: string;
   sender_role: "billing_team" | "practitioner";
   created_at: string;
 }
 
-const cardClassName = "rounded-sm border border-slate-700/40 bg-[#12253f] p-5 shadow-2xl backdrop-blur-sm";
-const inputClassName = "w-full rounded-sm border border-slate-600/50 bg-[#0d1b2e]/80 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 outline-none transition focus:border-teal-400/80 shadow-inner";
-const labelClassName = "mb-1 block text-[10px] font-medium uppercase tracking-wider text-slate-400";
-const sectionHeaderClass = "text-xs font-bold uppercase tracking-wider text-teal-400 pb-1.5 mb-4 border-b border-teal-500/30";
-const pillBtnClass = "flex items-center gap-1.5 rounded-full bg-[#12253f] border border-slate-600/50 px-4 py-1.5 text-xs font-medium text-slate-200 hover:bg-[#1a3254] hover:border-slate-500/50 transition shadow-sm";
+// ─── Surgical Clean Styling Tokens ───────────────────────────────────────────
+const cardClassName =
+  "rounded border border-cyan-500/40 bg-black p-5 shadow-[0_10px_40px_rgba(0,0,0,0.9)]";
 
-export default function OfficeAdminPage() {
+const inputClassName =
+  "w-full rounded border border-cyan-400 bg-black px-3 py-1.5 text-sm font-bold text-cyan-400 placeholder:text-cyan-900 outline-none transition focus:border-cyan-300 focus:ring-1 focus:ring-cyan-300/20 min-h-[36px] [color-scheme:dark]";
+
+const labelClassName =
+  "mb-1 block text-[11px] font-bold uppercase tracking-wider text-slate-200";
+
+export default function OfficeDashboard() {
   const [claims, setClaims] = useState<ClaimRecord[]>([]);
-  const [selectedClaimId, setSelectedClaimId] = useState<string | null>(null);
-  const [manualBilledAmount, setManualBilledAmount] = useState("");
-  
   const [tickets, setTickets] = useState<TicketThread[]>([]);
+  
+  const [selectedClaim, setSelectedClaim] = useState<ClaimRecord | null>(null);
   const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
   const [ticketMessages, setTicketMessages] = useState<TicketMessage[]>([]);
-  const [chatReplyInput, setChatReplyInput] = useState("");
-  const [newTicketSubject, setNewTicketSubject] = useState("");
-
-  const [activeTab, setActiveTab] = useState<"claims" | "tickets">("claims");
-  const [processing, setProcessing] = useState(false);
+  
+  const [chatInput, setChatInput] = useState("");
+  const [searchFilter, setSearchFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"all" | "captured" | "on_hold" | "billed">("all");
+  
   const [realtimeTrigger, setRealtimeTrigger] = useState(0);
+  const [isProcessing, setIsProcessing] = useState(false);
 
   const supabase = createClient();
 
+  // Fetch Claims and Tickets
   useEffect(() => {
-    async function fetchClaimsAndTickets() {
-      try {
-        const { data: claimsData } = await supabase
-          .from("claims")
-          .select("*, practitioner_profiles:profiles(title_name_surname, pr_number, specialty)")
-          .order("created_at", { ascending: false });
-        if (claimsData) setClaims(claimsData as unknown as ClaimRecord[]);
+    async function fetchOfficeData() {
+      const { data: claimsData } = await supabase
+        .from("claims")
+        .select("*, profiles(title_name_surname, pr_number, specialty)")
+        .order("created_at", { ascending: false });
+        
+      if (claimsData) setClaims(claimsData as ClaimRecord[]);
 
-        const { data: ticketsData } = await supabase
-          .from("tickets")
-          .select("*")
-          .order("updated_at", { ascending: false });
-        if (ticketsData) {
-          setTickets(ticketsData as TicketThread[]);
-          if (ticketsData.length > 0 && !selectedTicketId) {
-            setSelectedTicketId(ticketsData[0].id);
-          }
-        }
-      } catch (err) {
-        console.error("Data fetch error:", err);
-      }
+      const { data: ticketsData } = await supabase
+        .from("tickets")
+        .select("*, profiles(title_name_surname)")
+        .order("updated_at", { ascending: false });
+        
+      if (ticketsData) setTickets(ticketsData as TicketThread[]);
     }
-    fetchClaimsAndTickets();
-  }, [realtimeTrigger, supabase, selectedTicketId]);
+    fetchOfficeData();
+  }, [realtimeTrigger, supabase]);
 
+  // Fetch Messages for Active Thread
   useEffect(() => {
     if (!selectedTicketId) return;
     let msgChannel: any;
 
-    async function fetchTicketMessages() {
+    async function fetchMessages() {
       const { data } = await supabase
         .from("ticket_messages")
         .select("*")
@@ -99,352 +104,318 @@ export default function OfficeAdminPage() {
       if (data) setTicketMessages(data as TicketMessage[]);
 
       msgChannel = supabase
-        .channel(`office-msg-sync-${selectedTicketId}`)
-        .on("postgres_changes", {
-          event: "INSERT",
-          schema: "public",
-          table: "ticket_messages",
-          filter: `ticket_id=eq.${selectedTicketId}`
-        }, (payload: { new: TicketMessage }) => {
-          setTicketMessages(prev => [...prev, payload.new]);
+        .channel(`office-msg-${selectedTicketId}`)
+        .on("postgres_changes", { event: "INSERT", schema: "public", table: "ticket_messages", filter: `ticket_id=eq.${selectedTicketId}` }, (payload) => {
+          setTicketMessages(prev => [...prev, payload.new as TicketMessage]);
         })
         .subscribe();
     }
-    fetchTicketMessages();
-
-    return () => {
-      if (msgChannel) supabase.removeChannel(msgChannel);
-    };
+    fetchMessages();
+    return () => { if (msgChannel) supabase.removeChannel(msgChannel); };
   }, [selectedTicketId, supabase]);
 
-  const handleUpdateClaimBilledAmount = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedClaimId || !manualBilledAmount.trim()) return;
-    setProcessing(true);
+  // Realtime Subscriptions for global dashboard metrics
+  useEffect(() => {
+    const claimsChan = supabase
+      .channel("office-claims-sync")
+      .on("postgres_changes", { event: "*", schema: "public", table: "claims" }, () => setRealtimeTrigger(p => p + 1))
+      .subscribe();
 
+    const ticketsChan = supabase
+      .channel("office-tickets-sync")
+      .on("postgres_changes", { event: "*", schema: "public", table: "tickets" }, () => setRealtimeTrigger(p => p + 1))
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(claimsChan);
+      supabase.removeChannel(ticketsChan);
+    };
+  }, [supabase]);
+
+  // Filtered Claims pipeline
+  const filteredClaims = useMemo(() => {
+    return claims.filter(c => {
+      const matchesStatus = statusFilter === "all" || c.status === statusFilter;
+      const providerName = c.profiles?.title_name_surname?.toLowerCase() || "";
+      const desc = c.procedure_description?.toLowerCase() || "";
+      const query = searchFilter.toLowerCase();
+      const matchesSearch = providerName.includes(query) || desc.includes(query) || c.icd10_code?.toLowerCase().includes(query);
+      return matchesStatus && matchesSearch;
+    });
+  }, [claims, statusFilter, searchFilter]);
+
+  // Financial calculations
+  const metrics = useMemo(() => {
+    const captured = claims.filter(c => c.status === "captured").length;
+    const hold = claims.filter(c => c.status === "on_hold").length;
+    const billed = claims.filter(c => c.status === "billed").length;
+    return { captured, hold, billed };
+  }, [claims]);
+
+  const handleUpdateStatus = async (claimId: string, nextStatus: ClaimStatus) => {
+    setIsProcessing(true);
     try {
-      const amount = parseFloat(manualBilledAmount);
-      const { error } = await supabase
-        .from("claims")
-        .update({ 
-          billed_amount: amount,
-          status: "billed"
-        })
-        .eq("id", selectedClaimId);
-
-      if (error) throw error;
-
-      // Update static tracking state across the matching profile reporting row context
-      const selectedClaim = claims.find(c => c.id === selectedClaimId);
-      if (selectedClaim) {
-        const pId = selectedClaim.practitioner_id;
-        const { data: existingReport } = await supabase
-          .from("billing_reports")
-          .select("total_billed_revenue")
-          .eq("practitioner_id", pId)
-          .maybeSingle();
-
-        const currentRevenue = existingReport ? Number(existingReport.total_billed_revenue) : 0;
-        await supabase
-          .from("billing_reports")
-          .upsert({ 
-            practitioner_id: pId, 
-            total_billed_revenue: currentRevenue + amount 
-          }, { onConflict: "practitioner_id" });
-      }
-
-      setManualBilledAmount("");
-      setSelectedClaimId(null);
+      const { data: authData } = await supabase.auth.getUser();
+      await supabase.from("claims").update({ status: nextStatus }).eq("id", claimId);
+      await supabase.from("audit_logs").insert([{ claim_id: claimId, user_id: authData.user?.id, action: `Claim status changed to ${nextStatus} via Office Audit Panel.` }]);
+      setSelectedClaim(prev => prev?.id === claimId ? { ...prev, status: nextStatus } : prev);
       setRealtimeTrigger(p => p + 1);
     } catch (err) {
       console.error(err);
     } finally {
-      setProcessing(false);
+      setIsProcessing(false);
     }
   };
 
-  const handleSendOfficeReply = async (e: React.FormEvent) => {
+  const handleSendChat = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!chatReplyInput.trim() || !selectedTicketId) return;
-
+    if (!chatInput.trim() || !selectedTicketId) return;
     try {
       const { data: authData } = await supabase.auth.getUser();
-      if (!authData?.user) return;
-
       await supabase.from("ticket_messages").insert([
-        { 
-          ticket_id: selectedTicketId, 
-          sender_id: authData.user.id, 
-          sender_role: "billing_team", 
-          message: chatReplyInput.trim() 
-        }
+        { ticket_id: selectedTicketId, sender_id: authData.user?.id, sender_role: "billing_team", message: chatInput.trim() }
       ]);
-      setChatReplyInput("");
-    } catch (err) {
-      console.error(err);
-    }
+      setChatInput("");
+    } catch (err) { console.error(err); }
   };
 
-  const handleInitializeTicket = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const activeClaim = claims.find(c => c.id === selectedClaimId);
-    if (!activeClaim || !newTicketSubject.trim()) return;
-
+  const handleCreateTicket = async (claim: ClaimRecord) => {
     try {
-      const { data: newTicket, error } = await supabase
-        .from("tickets")
-        .insert([
-          {
-            practitioner_id: activeClaim.practitioner_id,
-            subject: newTicketSubject.trim(),
-            status: "open",
-            medical_aid: activeClaim.extra_notes.match(/\[Medical Aid:\s*([^\]]+)\]/)?.[1] || "General Case"
-          }
-        ])
-        .select()
-        .single();
+      const { data: authData } = await supabase.auth.getUser();
+      const { data: nextTicket } = await supabase.from("tickets").insert([{
+        practitioner_id: claim.practitioner_id,
+        subject: `Audit Query: ${claim.icd10_code || "No ICD10"}`,
+        medical_aid: claim.extra_notes.match(/\[Billing Rate:\s*([^\]]+)\]/)?.[1] || "Review Required",
+        status: "open"
+      }]).select().single();
 
-      if (error) throw error;
-
-      await supabase.from("ticket_messages").insert([
-        {
-          ticket_id: newTicket.id,
-          sender_role: "billing_team",
-          message: `🚨 Case adjudication action opened regarding clinical capture description: "${activeClaim.procedure_description}"`
-        }
-      ]);
-
-      setNewTicketSubject("");
-      setSelectedTicketId(newTicket.id);
-      setActiveTab("tickets");
-      setRealtimeTrigger(p => p + 1);
-    } catch (err) {
-      console.error(err);
-    }
+      if (nextTicket) {
+        await supabase.from("ticket_messages").insert([
+          { ticket_id: nextTicket.id, sender_id: authData.user?.id, sender_role: "billing_team", message: `System initiated audit trail for case details: ${claim.procedure_description}. Please review and update parameters.` }
+        ]);
+        setSelectedTicketId(nextTicket.id);
+      }
+    } catch (err) { console.error(err); }
   };
-
-  const selectedClaimDetails = useMemo(() => {
-    return claims.find(c => c.id === selectedClaimId) || null;
-  }, [claims, selectedClaimId]);
 
   return (
-    <div className="relative min-h-screen bg-[#0d1b2e] text-slate-100 flex flex-col font-sans selection:bg-teal-500/30 selection:text-teal-200">
-      <div className="relative mx-auto w-full max-w-[1680px] px-6 py-6 flex-1 flex flex-col gap-6">
-        
-        {/* Top Header Navigation Strip */}
-        <header className="flex flex-col lg:flex-row lg:items-center lg:justify-between border-b border-slate-700/60 pb-5 gap-4">
-          <div className="flex items-center gap-3">
-            <div className="flex items-center justify-center w-8 h-8 rounded bg-teal-500/10 text-teal-400 border border-teal-500/30 font-bold shadow-sm">
-              🛡️
+    <div className="relative min-h-screen bg-black text-slate-100 flex flex-col font-sans antialiased selection:bg-cyan-500/30">
+      <div className="relative mx-auto w-full max-w-[1720px] px-4 py-4 flex-1 flex flex-col gap-4">
+
+        {/* ── HEADER ────────────────────────────────────────────────────────── */}
+        <header className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between border-b border-cyan-500/20 pb-3">
+          <div className="flex flex-col gap-0.5">
+            <div className="flex items-baseline gap-2">
+              <span className="inline-block w-1.5 h-1.5 rounded-full bg-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.8)]" />
+              <span className="text-[10px] font-bold tracking-[0.2em] uppercase text-cyan-400">by MediBurgh</span>
             </div>
-            <div>
-              <h1 className="text-xl font-black tracking-wider text-white font-sans uppercase flex items-center gap-2">
-                THE DOC LOG <span className="text-xs font-semibold tracking-widest text-teal-400/80">/ BY MEDIBURGH</span>
-              </h1>
-              <p className="text-[11px] font-mono text-slate-400 uppercase tracking-wider mt-1">
-                Central Bureau Adjudication Management Terminal Layer
-              </p>
+            <h1 className="text-2xl font-black tracking-tight text-white uppercase">ClinTech Audit Control</h1>
+            <div className="mt-1 flex items-center gap-2 font-mono text-[11px] text-slate-400">
+              <span className="font-bold text-cyan-400">Central Back-Office Engine</span>
+              <span>•</span>
+              <span>System-wide Bureau Auditing Grid</span>
             </div>
           </div>
 
-          <div className="flex items-center gap-3 self-end lg:self-center">
-            <button onClick={() => setActiveTab("claims")} className={`${pillBtnClass} ${activeTab === "claims" ? "border-teal-400 text-teal-400 bg-[#1a3254]" : ""}`}>
-              Claims Queue
-            </button>
-            <button onClick={() => setActiveTab("tickets")} className={`${pillBtnClass} ${activeTab === "tickets" ? "border-teal-400 text-teal-400 bg-[#1a3254]" : ""}`}>
-              Adjudication Desk
-            </button>
-            <button onClick={() => window.location.href = "/"} className="flex items-center gap-1.5 rounded-full bg-red-950/30 border border-red-500/30 px-4 py-1.5 text-xs font-bold uppercase tracking-wider text-red-400 hover:bg-red-900/30 hover:border-red-400/40 transition shadow-sm">
-              EXIT
-            </button>
+          {/* Session Counters */}
+          <div className="flex items-center gap-2 font-mono text-xs">
+            <div className="rounded border border-cyan-500/30 bg-black px-3 py-1.5 text-cyan-400 font-bold">
+              UNRESOLVED: <span>{metrics.captured}</span>
+            </div>
+            <div className="rounded border border-amber-500/30 bg-black px-3 py-1.5 text-amber-400 font-bold">
+              HELD CASES: <span>{metrics.hold}</span>
+            </div>
+            <div className="rounded border border-emerald-500/30 bg-black px-3 py-1.5 text-emerald-400 font-bold">
+              BILLED MTD: <span>{metrics.billed}</span>
+            </div>
           </div>
         </header>
 
-        {/* Workspace Operations Allocation Grid */}
-        <div className="grid grid-cols-1 xl:grid-cols-5 gap-6 flex-1">
-          
-          {/* LEFT PANEL: Context Action Lists Queue */}
-          <section className={`xl:col-span-3 space-y-5 ${cardClassName}`}>
-            {activeTab === "claims" ? (
-              <>
-                <h2 className={sectionHeaderClass}>PRIMARY BILLING SHEET PIPELINE</h2>
-                <div className="overflow-y-auto max-h-[680px] divide-y divide-slate-800/80 pr-2">
-                  {claims.map(c => (
-                    <div 
-                      key={c.id} 
-                      onClick={() => { setSelectedClaimId(c.id); setManualBilledAmount(c.billed_amount?.toString() || ""); }}
-                      className={`p-4 cursor-pointer transition-colors flex flex-col md:flex-row md:items-center justify-between gap-3 ${selectedClaimId === c.id ? "bg-[#12253f]/90 border-l-2 border-teal-500" : "hover:bg-[#12253f]/40"}`}
-                    >
+        {/* ── CONTROLS STRIP ─────────────────────────────────────────────────── */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <input
+            type="text"
+            placeholder="Filter by practitioner, code, or description..."
+            value={searchFilter}
+            onChange={e => setSearchFilter(e.target.value)}
+            className={inputClassName}
+          />
+          <div className="flex gap-2">
+            {(["all", "captured", "on_hold", "billed"] as const).map((st) => (
+              <button
+                key={st}
+                onClick={() => setStatusFilter(st)}
+                className={`flex-1 rounded border text-xs font-bold uppercase tracking-wider py-1.5 transition ${statusFilter === st
+                  ? "border-cyan-400 bg-cyan-950/40 text-cyan-300"
+                  : "border-cyan-500/20 bg-black text-slate-400 hover:text-cyan-400"
+                }`}
+              >
+                {st.replace("_", " ")}
+              </button>
+            ))}
+          </div>
+          <div className="text-right flex items-center justify-end font-mono text-[11px] text-cyan-600">
+            TOTAL ENGINES COMPLIANT • REALTIME LIVE SYNC
+          </div>
+        </div>
+
+        {/* ── MAIN AUDIT CONTROL GRID ───────────────────────────────────────── */}
+        <div className="grid grid-cols-1 xl:grid-cols-5 gap-4 flex-1">
+
+          {/* ── LEFT TABLE: Claims queue listing ───────────────────────────── */}
+          <section className={`xl:col-span-3 overflow-hidden flex flex-col ${cardClassName}`}>
+            <div className="border-b border-cyan-500/20 pb-2 mb-2 flex items-center justify-between">
+              <h2 className="text-xs font-black uppercase tracking-wider text-white">Inbound Billing Pipeline</h2>
+              <span className="text-[10px] font-mono text-cyan-400/70">QUEUE COUNT: {filteredClaims.length}</span>
+            </div>
+
+            <div className="flex-1 overflow-y-auto divide-y divide-cyan-950/60 max-h-[680px] pr-1 scrollbar-thin scrollbar-thumb-cyan-950">
+              {filteredClaims.length === 0 ? (
+                <div className="p-8 text-center text-xs italic text-cyan-900 font-mono">NO VERIFIED ATTACHMENTS MATCHING SEARCH PARAMETERS</div>
+              ) : (
+                filteredClaims.map(c => (
+                  <div
+                    key={c.id}
+                    onClick={() => setSelectedClaim(c)}
+                    className={`p-3 transition cursor-pointer flex flex-col gap-1 rounded ${selectedClaim?.id === c.id ? "bg-cyan-950/20 border border-cyan-500/40" : "hover:bg-cyan-950/10 border border-transparent"}`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
                       <div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs font-bold text-slate-200">
-                            {c.practitioner_profiles?.title_name_surname || "Dr X Burke"}
-                          </span>
-                          <span className="text-[10px] bg-[#0d1b2e] px-1.5 py-0.5 font-mono text-slate-400 border border-slate-700/60 rounded-sm">
-                            {c.practitioner_profiles?.pr_number || "PR0232610"}
-                          </span>
-                        </div>
-                        <p className="text-sm text-slate-300 mt-1 font-medium">{c.procedure_description}</p>
-                        <p className="text-[11px] font-mono text-slate-500 mt-1 truncate max-w-md">{c.extra_notes}</p>
+                        <span className="text-xs font-black uppercase tracking-wide text-white">{c.profiles?.title_name_surname || "Unknown Doctor"}</span>
+                        <span className="block text-[10px] font-mono text-cyan-500/80">{c.profiles?.specialty} • PR: {c.profiles?.pr_number}</span>
                       </div>
-                      <div className="text-right flex flex-row md:flex-col items-center md:items-end justify-between md:justify-center gap-2">
-                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-sm uppercase tracking-wider ${
-                          c.status === "billed" ? "bg-emerald-950/80 text-emerald-400 border border-emerald-800/40" :
-                          c.status === "on_hold" ? "bg-amber-950/80 text-amber-400 border border-amber-800/40" : "bg-teal-950/80 text-teal-400 border border-teal-800/40"
-                        }`}>
-                          {c.status}
-                        </span>
-                        {c.billed_amount ? (
-                          <span className="text-xs font-mono font-bold text-teal-400">R {c.billed_amount.toLocaleString()}</span>
-                        ) : (
-                          <span className="text-xs font-mono text-slate-600">—</span>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </>
-            ) : (
-              <>
-                <h2 className={sectionHeaderClass}>ACTIVE CASE DISPUTE STREAMS</h2>
-                <div className="overflow-y-auto max-h-[680px] divide-y divide-slate-800/80 pr-2">
-                  {tickets.map(t => (
-                    <div 
-                      key={t.id} 
-                      onClick={() => setSelectedTicketId(t.id)}
-                      className={`p-4 cursor-pointer transition-colors flex items-center justify-between gap-4 ${selectedTicketId === t.id ? "bg-[#12253f]/90 border-l-2 border-teal-500" : "hover:bg-[#12253f]/40"}`}
-                    >
-                      <div>
-                        <h4 className={`text-sm font-bold ${t.status === "urgent" ? "text-red-400" : "text-slate-200"}`}>{t.subject}</h4>
-                        <p className="text-[10px] font-mono text-slate-500 mt-1 uppercase tracking-wider">{t.medical_aid || "General Case"}</p>
-                      </div>
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-sm uppercase tracking-wider ${
-                        t.status === "closed" ? "bg-slate-950 text-slate-500 border border-slate-800" : "bg-red-950 text-red-400 border border-red-900/40 animate-pulse"
-                      }`}>
-                        {t.status}
+                      <span className={`text-[9px] font-mono font-black border rounded px-1.5 py-0.5 uppercase ${c.status === "captured" ? "border-cyan-400 text-cyan-400" : c.status === "on_hold" ? "border-amber-400 text-amber-400" : "border-emerald-400 text-emerald-400"}`}>
+                        {c.status.replace("_", " ")}
                       </span>
                     </div>
-                  ))}
-                </div>
-              </>
-            )}
+                    <p className="text-xs text-slate-300 font-semibold truncate mt-1">{c.procedure_description}</p>
+                    <div className="flex items-center justify-between text-[10px] font-mono text-slate-500 mt-0.5">
+                      <span>ICD10: <span className="text-cyan-400 font-bold">{c.icd10_code || "NONE"}</span></span>
+                      <span>{new Date(c.created_at).toLocaleDateString("en-ZA")} {new Date(c.created_at).toLocaleTimeString("en-ZA", { hour: "2-digit", minute: "2-digit" })}</span>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
           </section>
 
-          {/* RIGHT PANEL: Dynamic Audit Detail Handlers & Full Realtime Ticket Thread Chat View */}
+          {/* ── RIGHT PANELS: Detailed view & Messaging ─────────────────────── */}
           <aside className="xl:col-span-2 flex flex-col gap-4">
-            
-            {activeTab === "claims" ? (
-              <div className={`flex-1 flex flex-col space-y-4 ${cardClassName}`}>
-                <h2 className={sectionHeaderClass}>CLAIM RESOLUTION ENGINE</h2>
-                {selectedClaimDetails ? (
-                  <div className="flex-1 flex flex-col space-y-4 overflow-y-auto pr-1">
-                    <div className="bg-[#0d1b2e]/60 border border-slate-700/40 p-3 rounded-sm space-y-2 shadow-inner">
-                      <p className="text-[10px] uppercase font-mono tracking-wider text-slate-500">System Extraction Metadata Notes</p>
-                      <p className="text-xs text-slate-300 leading-relaxed font-mono">{selectedClaimDetails.extra_notes}</p>
+
+            {/* Audit Detail Inspector panel */}
+            <div className={`flex flex-col ${cardClassName} ${selectedClaim ? "" : "justify-center items-center text-center p-8 min-h-[220px]"}`}>
+              {selectedClaim ? (
+                <div className="space-y-3 w-full">
+                  <div className="border-b border-cyan-500/20 pb-2 flex items-center justify-between">
+                    <h3 className="text-xs font-black uppercase tracking-wider text-white">Case Audit File</h3>
+                    <button
+                      onClick={() => handleCreateTicket(selectedClaim)}
+                      className="rounded border border-cyan-400 px-2 py-0.5 text-[9px] font-black uppercase tracking-wider text-cyan-400 bg-black hover:bg-cyan-950/30"
+                    >
+                      🗣️ Open Query
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs font-medium border-b border-cyan-500/10 pb-2.5">
+                    <div>
+                      <span className="block text-[9px] text-slate-500 font-bold uppercase">Classification Target</span>
+                      <span className="font-mono text-cyan-400 font-bold">{selectedClaim.icd10_code || "Not Stated"}</span>
                     </div>
-
-                    {/* Manual Ledger Audit Processing Input Box */}
-                    <form onSubmit={handleUpdateClaimBilledAmount} className="space-y-3 bg-[#0d1b2e]/30 p-3 border border-slate-700/30 rounded-sm shadow-inner">
-                      <div>
-                        <label className={labelClassName}>Manually Inserted Billed Value (ZAR)</label>
-                        <input 
-                          type="number" 
-                          step="0.01" 
-                          value={manualBilledAmount} 
-                          onChange={e => setManualBilledAmount(e.target.value)} 
-                          className={inputClassName} 
-                          placeholder="Insert verified report total e.g. 2450.00" 
-                          required 
-                        />
-                      </div>
-                      <button 
-                        type="submit" 
-                        disabled={processing}
-                        className="w-full bg-emerald-600 font-bold py-2 text-xs uppercase tracking-wider text-white rounded-sm hover:bg-emerald-500 transition-colors shadow-md"
-                      >
-                        {processing ? "Updating Ledger Entry..." : "Finalize Report Batch Entry"}
-                      </button>
-                    </form>
-
-                    {/* Launch Subordinated Discrepancy Ticket Grid Form */}
-                    <form onSubmit={handleInitializeTicket} className="space-y-3 bg-[#0d1b2e]/30 p-3 border border-slate-700/30 rounded-sm shadow-inner">
-                      <div>
-                        <label className={labelClassName}>Open Adjudication Discrepancy Ticket</label>
-                        <input 
-                          type="text" 
-                          value={newTicketSubject} 
-                          onChange={e => setNewTicketSubject(e.target.value)} 
-                          className={inputClassName} 
-                          placeholder="e.g. Need medical aid pre-auth validation token" 
-                          required 
-                        />
-                      </div>
-                      <button 
-                        type="submit" 
-                        className="w-full bg-teal-600 font-bold py-2 text-xs uppercase tracking-wider text-white rounded-sm hover:bg-teal-500 transition-colors shadow-md"
-                      >
-                        Launch Direct Live Chat Ticket
-                      </button>
-                    </form>
-
-                    {/* Image Viewports Panel layout structure matching dashboard logic */}
-                    <div className="space-y-3 pt-2">
-                      {selectedClaimDetails.image_url && (
-                        <div className="border border-slate-700/50 bg-[#0d1b2e] p-2 rounded-sm shadow-inner">
-                          <p className="text-[9px] font-mono text-slate-500 uppercase mb-1">Primary Capture Asset File</p>
-                          <img src={selectedClaimDetails.image_url} alt="Primary Billing sheet extraction view" className="w-full rounded-sm object-contain max-h-[220px]" />
-                        </div>
-                      )}
-                      {selectedClaimDetails.extra_image_url && (
-                        <div className="border border-slate-700/50 bg-[#0d1b2e] p-2 rounded-sm shadow-inner">
-                          <p className="text-[9px] font-mono text-slate-500 uppercase mb-1">Secondary Allocation Attachment</p>
-                          <img src={selectedClaimDetails.extra_image_url} alt="Secondary asset layout" className="w-full rounded-sm object-contain max-h-[220px]" />
-                        </div>
-                      )}
+                    <div>
+                      <span className="block text-[9px] text-slate-500 font-bold uppercase">Tariff Codes</span>
+                      <span className="font-mono text-white font-bold">
+                        {selectedClaim.extra_notes.match(/\[Procedure Code:\s*([^\]]+)\]/)?.[1] || "None Specified"}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="block text-[9px] text-slate-500 font-bold uppercase">Calculated Body Mass Index</span>
+                      <span className="font-mono text-slate-300">{selectedClaim.bmi_info ? `${selectedClaim.bmi_info} kg/m²` : "N/A"}</span>
+                    </div>
+                    <div>
+                      <span className="block text-[9px] text-slate-500 font-bold uppercase">Modifications Stack</span>
+                      <span className="font-mono text-cyan-300 text-[11px] truncate block">{selectedClaim.modifiers?.join(", ") || "None"}</span>
                     </div>
                   </div>
-                ) : (
-                  <div className="flex-1 flex items-center justify-center text-xs text-slate-500 italic p-6 text-center">
-                    Select an operations claim record tracking row to initialize report processing logic blocks.
+
+                  {/* Attachment Previews */}
+                  <div className="flex gap-2">
+                    {selectedClaim.image_url && (
+                      <a href={selectedClaim.image_url} target="_blank" rel="noreferrer" className="flex-1 block rounded border border-cyan-500/20 bg-cyan-950/10 p-1.5 text-center text-[10px] font-bold text-cyan-400 uppercase tracking-wider hover:border-cyan-400">
+                        View Primary Sheet
+                      </a>
+                    )}
+                    {selectedClaim.extra_image_url && (
+                      <a href={selectedClaim.extra_image_url} target="_blank" rel="noreferrer" className="flex-1 block rounded border border-cyan-500/20 bg-cyan-950/10 p-1.5 text-center text-[10px] font-bold text-cyan-400 uppercase tracking-wider hover:border-cyan-400">
+                        View Support Doc
+                      </a>
+                    )}
                   </div>
-                )}
+
+                  {/* Workflow routing layout CTA */}
+                  <div className="grid grid-cols-2 gap-2 border-t border-cyan-500/20 pt-2.5">
+                    <button
+                      onClick={() => handleUpdateStatus(selectedClaim.id, "billed")}
+                      disabled={isProcessing || selectedClaim.status === "billed"}
+                      className="rounded border border-emerald-400 bg-black py-1.5 text-xs font-black uppercase tracking-wider text-emerald-400 hover:bg-emerald-950/20 disabled:opacity-30"
+                    >
+                      ✓ Post to Medical Aid
+                    </button>
+                    <button
+                      onClick={() => handleUpdateStatus(selectedClaim.id, "on_hold")}
+                      disabled={isProcessing || selectedClaim.status === "on_hold"}
+                      className="rounded border border-amber-400 bg-black py-1.5 text-xs font-black uppercase tracking-wider text-amber-400 hover:bg-amber-950/20 disabled:opacity-30"
+                    >
+                      ⚠️ flag on hold
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-[10px] font-mono text-cyan-900 uppercase">Select a medical case record from the billing pipeline grid to initiate back-office validation.</p>
+              )}
+            </div>
+
+            {/* Adjudication Workspace Chat Module */}
+            <div className={`flex-1 flex flex-col overflow-hidden max-h-[400px] ${cardClassName}`}>
+              <div className="border-b border-cyan-500/20 pb-2">
+                <h3 className="text-xs font-black uppercase tracking-wider text-white">Active Adjudication Streams</h3>
+                <p className="text-[9px] font-mono text-cyan-600/80 uppercase">Direct validation loop with providers</p>
               </div>
-            ) : (
-              /* ADJUDICATION TICKETS: Direct Unified Chat Window Engine Frame */
-              <div className={`flex-1 flex flex-col overflow-hidden max-h-[560px] ${cardClassName}`}>
-                <h2 className={sectionHeaderClass}>LIVE ADJUDICATION PACK VIEW</h2>
 
-                <div className="flex-1 flex flex-col overflow-hidden bg-[#0d1b2e]/40 border border-slate-700/30 rounded-sm shadow-inner">
+              <div className="flex-1 grid grid-cols-3 overflow-hidden min-h-0 pt-2">
+                {/* Tickets side menu */}
+                <ul className="col-span-1 border-r border-cyan-500/20 divide-y divide-cyan-950 overflow-y-auto bg-black pr-1">
+                  {tickets.length === 0 && (
+                    <li className="p-2 text-[10px] text-cyan-900 font-mono italic">NO CHAT ALERTS ACTIVE</li>
+                  )}
+                  {tickets.map(t => (
+                    <li
+                      key={t.id}
+                      onClick={() => setSelectedTicketId(t.id)}
+                      className={`cursor-pointer p-2 text-[11px] flex flex-col gap-0.5 rounded transition ${selectedTicketId === t.id ? "bg-cyan-950/40 border border-cyan-400 text-cyan-300" : "border border-transparent text-slate-400 hover:text-slate-200"}`}
+                    >
+                      <span className="font-bold truncate text-slate-200">{t.profiles?.title_name_surname || "Doctor"}</span>
+                      <span className="font-mono text-[9px] text-cyan-600 uppercase tracking-tight truncate">{t.subject}</span>
+                    </li>
+                  ))}
+                </ul>
+
+                {/* Messages stream pane */}
+                <div className="col-span-2 flex flex-col overflow-hidden bg-black pl-2">
                   {selectedTicketId ? (
                     <>
-                      {/* Ticket contextual layout description banner ribbon */}
-                      <div className="border-b border-slate-700/50 bg-[#12253f]/80 px-4 py-2.5 flex items-center justify-between shadow-sm">
-                        <div className="truncate">
-                          <span className="text-xs font-bold text-slate-200 uppercase tracking-wide">
-                            {tickets.find(t => t.id === selectedTicketId)?.subject || "Case Thread"}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-1">
-                          <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
-                          <span className="text-[9px] font-mono text-slate-500 uppercase">Bureau Stream</span>
-                        </div>
-                      </div>
-
-                      {/* Interactive scrolling thread area container viewport line mapping */}
-                      <div className="flex-1 p-4 overflow-y-auto space-y-3 text-xs flex flex-col custom-scrollbar">
+                      <div className="flex-1 flex flex-col space-y-2 overflow-y-auto py-2 pr-1 text-xs">
                         {ticketMessages.map(m => {
                           const isOffice = m.sender_role === "billing_team";
                           return (
-                            <div 
-                              key={m.id} 
-                              className={`max-w-[85%] rounded-sm p-3 flex flex-col shadow-sm border ${
-                                isOffice 
-                                  ? "bg-teal-950/40 border-teal-500/20 text-teal-200 self-end" 
-                                  : "bg-[#12253f]/90 border-slate-600/30 text-slate-200 self-start"
+                            <div
+                              key={m.id}
+                              className={`max-w-[90%] rounded p-2 flex flex-col border ${isOffice
+                                ? "self-end border-cyan-400/40 bg-cyan-950/20 text-cyan-300"
+                                : "self-start border-cyan-900 bg-black text-slate-300"
                               }`}
                             >
-                              <span className="font-sans leading-relaxed break-words">{m.message}</span>
-                              <span className="text-[8px] font-mono text-slate-500 mt-1.5 self-end tracking-wider">
+                              <span className="leading-normal font-medium">{m.message}</span>
+                              <span className="mt-0.5 self-end font-mono text-[8px] opacity-60">
                                 {new Date(m.created_at).toLocaleTimeString("en-ZA", { hour: "2-digit", minute: "2-digit" })}
                               </span>
                             </div>
@@ -452,30 +423,26 @@ export default function OfficeAdminPage() {
                         })}
                       </div>
 
-                      {/* Single text interaction post bar structure matching master workspace config layout */}
-                      <div className="border-t border-slate-700/60 bg-[#12253f]/60 p-3">
-                        <form onSubmit={handleSendOfficeReply} className="flex rounded-sm bg-[#0d1b2e] border border-slate-600/60 px-3 py-2 shadow-inner focus-within:border-teal-400 transition-colors">
-                          <input 
-                            type="text" 
-                            value={chatReplyInput} 
-                            onChange={e => setChatReplyInput(e.target.value)} 
-                            placeholder="Type direct response response instructions onto clinical terminal..." 
-                            className="flex-1 bg-transparent text-xs text-slate-100 placeholder:text-slate-600 outline-none" 
-                          />
-                          <button type="submit" className="text-teal-400 hover:text-teal-300 font-bold text-xs font-mono uppercase tracking-wider ml-2 transition-colors">
-                            Send
-                          </button>
-                        </form>
-                      </div>
+                      <form onSubmit={handleSendChat} className="flex border-t border-cyan-500/20 pt-2">
+                        <input
+                          type="text"
+                          value={chatInput}
+                          onChange={e => setChatInput(e.target.value)}
+                          placeholder="Transmit advisory note to practitioner..."
+                          className="flex-1 bg-black text-xs text-cyan-400 placeholder:text-cyan-900 outline-none pr-2 font-semibold"
+                        />
+                        <button type="submit" className="rounded border border-cyan-400 bg-black px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-cyan-400 hover:bg-cyan-950/30">Send</button>
+                      </form>
                     </>
                   ) : (
-                    <div className="flex-1 flex items-center justify-center text-xs text-slate-500 italic p-6 text-center">
-                      No active communications threads open on terminal desk selection state.
+                    <div className="flex flex-1 items-center justify-center text-center p-4">
+                      <p className="text-[10px] font-mono text-cyan-900 uppercase">Select an active query session to interface with practitioner dashboard files.</p>
                     </div>
                   )}
                 </div>
               </div>
-            )}
+            </div>
+
           </aside>
         </div>
       </div>
