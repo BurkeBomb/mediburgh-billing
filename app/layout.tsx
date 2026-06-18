@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import ServiceWorkerRegister from "@/app/components/ServiceWorkerRegister";
+import { ToastProvider } from "@/app/components/ToastProvider";
 
 export const metadata: Metadata = {
   title: "Mediburgh Billing System",
@@ -21,7 +22,7 @@ export default function RootLayout({
       <body className="h-full font-sans antialiased text-slate-100 selection:bg-teal-500/30 selection:text-teal-200">
         {/* Core Layout Content Mount Checkpoint */}
         <div className="relative min-h-screen flex flex-col">
-          {children}
+          <ToastProvider>{children}</ToastProvider>
         </div>
         <ServiceWorkerRegister />
       </body>

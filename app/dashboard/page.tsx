@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/utils/supabase";
 import { loadIcdList, searchIcd, IcdCodeItem } from "@/utils/icd";
+import { useToast } from "@/app/components/ToastProvider";
 
 type ClaimStatus = "captured" | "on_hold" | "billed";
 
@@ -44,6 +45,7 @@ const calculateBMI = (weightKg: string, heightCm: string): string => {
 
 export default function DashboardPage() {
   const supabase = useMemo(() => createClient(), []);
+  const toast = useToast();
   const [form, setForm] = useState<ClaimFormState>(emptyForm());
   const [icdQuery, setIcdQuery] = useState("");
   const [icdResults, setIcdResults] = useState<IcdCodeItem[]>([]);
@@ -90,23 +92,20 @@ export default function DashboardPage() {
     setIsSubmitting(true);
 
     try {
-      // upload file if present
+      // upload file via server endpoint if present
       let imageUrl: string | null = null;
 
       if (file) {
-        const filePath = `claims/${Date.now()}_${file.name}`;
-        const { data, error: uploadErr } = await supabase.storage
-          .from("claims")
-          .upload(filePath, file, { upsert: true });
+        const formData = new FormData();
+        formData.append("file", file);
 
-        if (uploadErr) {
-          console.error("Upload error:", uploadErr);
+        const resp = await fetch("/api/upload", { method: "POST", body: formData });
+        const j = await resp.json();
+        if (!resp.ok) {
+          console.error("Upload failed:", j);
+          toast.push({ title: "Upload failed", description: j?.error || "Unknown error", variant: "error" });
         } else {
-          const { data: urlData } = supabase.storage
-            .from("claims")
-            .getPublicUrl(filePath);
-
-          imageUrl = urlData.publicUrl;
+          imageUrl = j.publicUrl;
         }
       }
 
@@ -136,7 +135,7 @@ export default function DashboardPage() {
 
       if (error) {
         console.error("Insert error:", error);
-        alert("Failed to save claim. Check console for details.");
+        toast.push({ title: "Save failed", description: "Failed to save claim. Check console.", variant: "error" });
         return null;
       } else {
         const claimId = (inserted as any).id as string;
@@ -155,12 +154,12 @@ export default function DashboardPage() {
           console.error("Failed to insert audit log:", alogErr);
         }
 
-        alert("Claim saved.");
+        toast.push({ title: "Saved", description: "Claim saved successfully.", variant: "success" });
         return claimId;
       }
     } catch (err) {
       console.error(err);
-      alert("Unexpected error. See console.");
+      toast.push({ title: "Error", description: "Unexpected error. See console.", variant: "error" });
       return null;
     } finally {
       setIsSubmitting(false);
@@ -170,7 +169,7 @@ export default function DashboardPage() {
   const handleCreateTicket = async () => {
     // Ticket creation is an explicit separate action. Do not auto-save.
     if (!lastSavedClaimId) {
-      alert("Please save the claim first before creating a ticket.");
+      toast.push({ title: "Save first", description: "Please save the claim first before creating a ticket.", variant: "info" });
       return;
     }
 
@@ -204,7 +203,7 @@ export default function DashboardPage() {
 
       if (ticketErr) {
         console.error("Ticket create error:", ticketErr);
-        alert("Failed to create ticket. See console.");
+        toast.push({ title: "Ticket failed", description: "Failed to create ticket.", variant: "error" });
         return;
       }
 
@@ -237,10 +236,10 @@ export default function DashboardPage() {
         console.error("Failed to insert audit log for ticket:", alogErr);
       }
 
-      alert("Ticket created.");
+      toast.push({ title: "Ticket", description: "Ticket created successfully.", variant: "success" });
     } catch (err) {
       console.error(err);
-      alert("Unexpected error creating ticket. See console.");
+      toast.push({ title: "Error", description: "Unexpected error creating ticket.", variant: "error" });
     } finally {
       setIsSubmitting(false);
     }
