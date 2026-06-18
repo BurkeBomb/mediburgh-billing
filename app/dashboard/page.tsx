@@ -127,14 +127,37 @@ const PRELOADED_MODIFIERS: ModifierOption[] = [
   { code: "5103 + 0083", label: "Ultrasound" },
 ];
 
+// ─── Design tokens ────────────────────────────────────────────────────────────
+// Base: near-black #080c10 with a cool steel-blue undertone
+// Accent: electric teal #00d4c8 (active/highlight)
+// Signal amber: #f59e0b (hold/warn)
+// Signal red: #ef4444 (errors/exit)
+// Card surface: slate-900/60 with hairline border slate-800
+// Header brand line: hot magenta #e91e8c  ←  the single bold risk
+// ─────────────────────────────────────────────────────────────────────────────
+
 const cardClassName =
-  "rounded-sm border border-slate-800/90 bg-slate-900/40 shadow-[0_16px_48px_rgba(0,0,0,0.35)] backdrop-blur-sm";
+  "rounded-md border border-slate-800/80 bg-slate-900/50 shadow-[0_20px_60px_rgba(0,0,0,0.45)] backdrop-blur-sm";
 
 const inputClassName =
-  "w-full rounded-sm border border-slate-700/80 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 outline-none transition focus:border-teal-500/70 focus:ring-1 focus:ring-teal-500/40";
+  "w-full rounded-md border border-slate-700/70 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 outline-none transition focus:border-teal-400/80 focus:ring-1 focus:ring-teal-400/30";
 
 const labelClassName =
-  "mb-1 block text-[10px] font-medium uppercase tracking-wider text-slate-400";
+  "mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400";
+
+// ─── Stat card subcomponent ───────────────────────────────────────────────────
+function StatCard({ label, value, accent }: { label: string; value: string; accent?: string }) {
+  return (
+    <div className="relative overflow-hidden rounded-md border border-slate-800 bg-slate-950/60 p-3 text-center">
+      {/* subtle left accent bar */}
+      <div className={`absolute left-0 top-0 h-full w-0.5 ${accent ?? "bg-teal-500"}`} />
+      <span className="block text-[9px] font-bold uppercase tracking-[0.15em] text-slate-500">{label}</span>
+      <span className={`mt-1 block font-mono text-xl font-extrabold ${accent ? "" : "text-white"}`}
+        style={accent ? { color: accent === "bg-teal-500" ? "#2dd4bf" : accent === "bg-amber-500" ? "#f59e0b" : "#e2e8f0" } : {}}
+      >{value}</span>
+    </div>
+  );
+}
 
 export default function DashboardPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -170,7 +193,7 @@ export default function DashboardPage() {
 
   const supabase = createClient();
 
-  // Auto-calculate BMI on form metric changes
+  // Auto-calculate BMI
   useEffect(() => {
     const bmi = calculateBMI(form.weight, form.height);
     setForm(p => ({ ...p, bmiInfo: bmi }));
@@ -197,13 +220,11 @@ export default function DashboardPage() {
     if (parseFloat(form.bmiInfo) > 35 && !mods.includes("0018")) {
       warnings.push("A registered BMI > 35 requires the selection of Modifier 0018.");
     }
-    
     const diagnosticCodes = ["1587", "1653", "1493", "2207", "3047", "3058", "2137"];
     const hasDiagnostic = procedureCodes.some(code => diagnosticCodes.includes(code));
     if (mods.includes("0018") && hasDiagnostic) {
       warnings.push("Diagnostic and non-surgical procedures may not be billed with 0018.");
     }
-
     if (mods.includes("0043") && form.extraNotes.toLowerCase().indexOf("age") === -1) {
       warnings.push("Rule 0043 Warning: Patient age validation parameters must be clearly specified within your note layout.");
     }
@@ -221,16 +242,13 @@ export default function DashboardPage() {
   useEffect(() => {
     let claimsChannel: any;
     let ticketsChannel: any;
-
     async function initializeSync() {
       const { data: authData } = await supabase.auth.getUser();
       if (!authData?.user) return;
-
       claimsChannel = supabase
         .channel(`cl-sync-${authData.user.id}`)
         .on("postgres_changes", { event: "UPDATE", schema: "public", table: "claims", filter: `practitioner_id=eq.${authData.user.id}` }, () => setRealtimeTrigger(p => p + 1))
         .subscribe();
-
       ticketsChannel = supabase
         .channel(`tk-sync-${authData.user.id}`)
         .on("postgres_changes", { event: "*", schema: "public", table: "tickets", filter: `practitioner_id=eq.${authData.user.id}` }, () => setRealtimeTrigger(p => p + 1))
@@ -301,45 +319,31 @@ export default function DashboardPage() {
   useEffect(() => {
     if (!selectedTicketId) return;
     let msgChannel: any;
-
     async function fetchMessages() {
       const { data } = await supabase.from("ticket_messages").select("*").eq("ticket_id", selectedTicketId).order("created_at", { ascending: true });
       if (data) setTicketMessages(data as any[]);
-
       msgChannel = supabase
         .channel(`msg-sync-${selectedTicketId}`)
-        .on("postgres_changes", { 
-          event: "INSERT", 
-          schema: "public", 
-          table: "ticket_messages", 
-          filter: `ticket_id=eq.${selectedTicketId}` 
-        }, (payload: { new: TicketMessage }) => {
+        .on("postgres_changes", { event: "INSERT", schema: "public", table: "ticket_messages", filter: `ticket_id=eq.${selectedTicketId}` }, (payload: { new: TicketMessage }) => {
           setTicketMessages(prev => [...prev, payload.new]);
         })
         .subscribe();
     }
     fetchMessages();
-
-    return () => { 
-      if (msgChannel) supabase.removeChannel(msgChannel); 
-    };
+    return () => { if (msgChannel) supabase.removeChannel(msgChannel); };
   }, [selectedTicketId, supabase]);
 
   const handleSendChatReply = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!chatReplyInput.trim() || !selectedTicketId) return;
-
     try {
       const { data: authData } = await supabase.auth.getUser();
       if (!authData?.user) return;
-
       await supabase.from("ticket_messages").insert([
         { ticket_id: selectedTicketId, sender_id: authData.user.id, sender_role: "practitioner", message: chatReplyInput.trim() }
       ]);
       setChatReplyInput("");
-    } catch (err) {
-      console.error(err);
-    }
+    } catch (err) { console.error(err); }
   };
 
   const handlePingOffice = async () => {
@@ -347,18 +351,10 @@ export default function DashboardPage() {
     try {
       const { data: authData } = await supabase.auth.getUser();
       if (!authData?.user) return;
-
       await supabase.from("ticket_messages").insert([
-        { 
-          ticket_id: selectedTicketId, 
-          sender_id: authData.user.id, 
-          sender_role: "practitioner", 
-          message: "⚠️ Practitioner requested an immediate case update status ping." 
-        }
+        { ticket_id: selectedTicketId, sender_id: authData.user.id, sender_role: "practitioner", message: "⚠️ Practitioner requested an immediate case update status ping." }
       ]);
-    } catch (err) {
-      console.error(err);
-    }
+    } catch (err) { console.error(err); }
   };
 
   const handleMarkTicketComplete = async () => {
@@ -367,15 +363,13 @@ export default function DashboardPage() {
       await supabase.from("tickets").update({ status: "closed" }).eq("id", selectedTicketId);
       setSelectedTicketId(null);
       setRealtimeTrigger(p => p + 1);
-    } catch (err) {
-      console.error(err);
-    }
+    } catch (err) { console.error(err); }
   };
 
   const validateForm = (): string | null => {
-    if (!form.icd10Code.trim()) return "ICD-10 Diagnostic Code choice is strictly required.";
-    if (!form.theatreStartTime.trim()) return "Theatre Operations Start Clock parameter is required.";
-    if (!form.theatreEndTime.trim()) return "Theatre Operations End Clock parameter is required.";
+    if (!form.icd10Code.trim()) return "ICD-10 Diagnostic Code is required before submission.";
+    if (!form.theatreStartTime.trim()) return "Theatre start time is required.";
+    if (!form.theatreEndTime.trim()) return "Theatre end time is required.";
     return null;
   };
 
@@ -421,10 +415,8 @@ export default function DashboardPage() {
       const errCheck = validateForm();
       if (errCheck) { setError(errCheck); return; }
     }
-
     setIsSaving(true);
     setError(null);
-
     try {
       let uploadedImageUrl = null;
       if (imageFile) {
@@ -433,7 +425,6 @@ export default function DashboardPage() {
         if (upErr) throw upErr;
         uploadedImageUrl = supabase.storage.from("claim-attachments").getPublicUrl(path).data.publicUrl;
       }
-
       let uploadedExtraImageUrl = null;
       if (extraImageFile) {
         const path = `extra-${crypto.randomUUID()}.${extraImageFile.name.split(".").pop()}`;
@@ -441,43 +432,41 @@ export default function DashboardPage() {
         if (upErr) throw upErr;
         uploadedExtraImageUrl = supabase.storage.from("claim-attachments").getPublicUrl(path).data.publicUrl;
       }
-
       const { data: authData } = await supabase.auth.getUser();
       if (!authData?.user) throw new Error("Authentication state lost.");
       const currentUserId = authData.user.id;
 
       const compositeNotes = `[Patient: ${form.patientName.trim() || "N/A"} ${form.patientSurname.trim() || "N/A"}] [Procedure Code: ${form.procedureCode.trim() || "None assigned"}] [Billing Rate: ${form.billingRate}] [Weight: ${form.weight || "N/A"}kg] [Height: ${form.height || "N/A"}cm] [BMI: ${form.bmiInfo || "N/A"}] ${form.extraNotes.trim()}`.trim();
 
-      const { data: record, error: claimErr } = await supabase.from("claims").insert([
-        {
-          practitioner_id: currentUserId,
-          procedure_description: form.procedureDescription || "Incomplete Case Record",
-          icd10_code: form.icd10Code || null,
-          theatre_start_time: form.theatreStartTime ? new Date(`${form.theatreDate}T${form.theatreStartTime}`).toISOString() : null,
-          theatre_end_time: form.theatreEndTime ? new Date(`${form.theatreDate}T${form.theatreEndTime}`).toISOString() : null,
-          bmi_info: form.bmiInfo ? parseFloat(form.bmiInfo) : null,
-          modifiers: form.modifiers ? form.modifiers.split(",").map(m => m.trim()).filter(Boolean) : [],
-          extra_notes: compositeNotes,
-          image_url: uploadedImageUrl,
-          extra_image_url: uploadedExtraImageUrl,
-          status: targetStatus
-        }
-      ]).select().single();
+      const { data: record, error: claimErr } = await supabase.from("claims").insert([{
+        practitioner_id: currentUserId,
+        procedure_description: form.procedureDescription || "Incomplete Case Record",
+        icd10_code: form.icd10Code || null,
+        theatre_start_time: form.theatreStartTime ? new Date(`${form.theatreDate}T${form.theatreStartTime}`).toISOString() : null,
+        theatre_end_time: form.theatreEndTime ? new Date(`${form.theatreDate}T${form.theatreEndTime}`).toISOString() : null,
+        bmi_info: form.bmiInfo ? parseFloat(form.bmiInfo) : null,
+        modifiers: form.modifiers ? form.modifiers.split(",").map(m => m.trim()).filter(Boolean) : [],
+        extra_notes: compositeNotes,
+        image_url: uploadedImageUrl,
+        extra_image_url: uploadedExtraImageUrl,
+        status: targetStatus
+      }]).select().single();
 
       if (claimErr) throw claimErr;
-
-      await supabase.from("audit_logs").insert([{ claim_id: record.id, user_id: currentUserId, action: "Claim authorized via desktop terminal input grid layer." }]);
+      await supabase.from("audit_logs").insert([{ claim_id: record.id, user_id: currentUserId, action: "Claim submitted via Practitioner Workspace." }]);
 
       if (targetStatus === "captured") setSubmittedCount(c => c + 1);
       else setHoldCount(c => c + 1);
       resetForm();
     } catch (err: any) {
-      setError(err.message || "Pipeline transfer error.");
-    } Platform.select;
+      setError(err.message || "Submission failed. Please try again.");
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const updateField = useCallback((field: keyof ClaimFormState, value: string) => setForm(p => ({ ...p, [field]: value })), []);
-  
+
   const selectIcdCode = (opt: { code: string; description: string }) => {
     updateField("icd10Code", opt.code);
     setIcdSearch(`${opt.code} — ${opt.description}`);
@@ -499,77 +488,161 @@ export default function DashboardPage() {
     return { label: "Obese", color: "text-red-400" };
   }, [form.bmiInfo]);
 
+  // ─── Render ─────────────────────────────────────────────────────────────────
   return (
-    <div className="relative min-h-screen bg-[#0b0f14] text-slate-100 flex flex-col">
-      <div aria-hidden className="pointer-events-none fixed inset-0 bg-[radial-gradient(ellipse_90%_55%_at_50%_-15%,rgba(20,184,166,0.12),transparent)]" />
+    <div className="relative min-h-screen bg-[#080c10] text-slate-100 flex flex-col font-sans">
 
-      <div className="relative mx-auto w-full max-w-[1680px] px-4 py-6 flex-1 flex flex-col gap-6">
-        <header className="flex justify-between items-end border-b border-slate-800 pb-5">
-          <div>
-            <p className="text-xs font-bold uppercase tracking-[0.4em] text-teal-400">MediBurgh</p>
-            <h1 className="text-4xl font-extrabold tracking-tight text-white mt-1 uppercase font-sans">
-              Anaesthetic Archive
+      {/* Ambient background glow */}
+      <div
+        aria-hidden
+        className="pointer-events-none fixed inset-0"
+        style={{
+          background:
+            "radial-gradient(ellipse 80% 40% at 50% 0%, rgba(0,212,200,0.09) 0%, transparent 70%), radial-gradient(ellipse 40% 30% at 90% 10%, rgba(233,30,140,0.05) 0%, transparent 60%)"
+        }}
+      />
+
+      <div className="relative mx-auto w-full max-w-[1720px] px-5 py-5 flex-1 flex flex-col gap-5">
+
+        {/* ── HEADER ────────────────────────────────────────────────────────── */}
+        <header className="flex flex-col gap-0 sm:flex-row sm:items-center sm:justify-between border-b border-slate-800/80 pb-4">
+
+          {/* Left: Brand + practitioner identity */}
+          <div className="flex flex-col gap-1">
+
+            {/* App name — the bold brand moment */}
+            <div className="flex items-baseline gap-2.5">
+              {/* Magenta accent dot */}
+              <span
+                className="inline-block w-2 h-2 rounded-full flex-shrink-0"
+                style={{ background: "#e91e8c", boxShadow: "0 0 8px 2px rgba(233,30,140,0.55)" }}
+              />
+              <span
+                className="text-[10px] font-bold tracking-[0.35em] uppercase"
+                style={{ color: "#e91e8c" }}
+              >
+                by MediBurgh
+              </span>
+            </div>
+
+            <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-white leading-none uppercase">
+              The Doc Log
             </h1>
-            {providerProfile && (
-              <p className="text-xs font-mono text-slate-400 mt-2 tracking-wide flex items-center gap-2">
-                <span className="text-teal-500/80">█</span> 
-                {providerProfile.title_name_surname} 
-                <span className="text-slate-600">|</span> 
-                {providerProfile.pr_number} 
-                <span className="text-slate-600">|</span> 
-                <span className="text-slate-300">{providerProfile.specialty}</span>
-              </p>
+
+            {/* Practitioner identity strip */}
+            {providerProfile ? (
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                {/* Avatar initial badge */}
+                <div
+                  className="flex h-8 w-8 items-center justify-center rounded-full text-[11px] font-black text-white flex-shrink-0"
+                  style={{ background: "linear-gradient(135deg, #00d4c8 0%, #007a74 100%)" }}
+                >
+                  {providerProfile.title_name_surname.replace(/^Dr\s+/i, "").charAt(0).toUpperCase()}
+                </div>
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 font-mono text-[11px]">
+                  <span className="font-bold text-teal-300">{providerProfile.title_name_surname}</span>
+                  <span className="text-slate-700">|</span>
+                  <span
+                    className="rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-widest"
+                    style={{ background: "rgba(0,212,200,0.1)", color: "#00d4c8", border: "1px solid rgba(0,212,200,0.25)" }}
+                  >
+                    {providerProfile.pr_number}
+                  </span>
+                  <span className="text-slate-700">|</span>
+                  <span className="text-slate-400">{providerProfile.specialty}</span>
+                </div>
+              </div>
+            ) : (
+              <div className="mt-2 h-5 w-48 animate-pulse rounded bg-slate-800" />
             )}
           </div>
-          <div className="flex gap-2 font-mono text-xs">
-            <div className="bg-slate-900 border border-slate-800 px-3 py-1.5 text-teal-400">SUBMITTED: {submittedCount}</div>
-            <div className="bg-slate-900 border border-slate-800 px-3 py-1.5 text-amber-400">HELD: {holdCount}</div>
-            <button onClick={() => window.location.href = "/"} className="bg-red-950/40 border border-red-500/30 px-3 text-red-400 font-sans uppercase tracking-wider font-semibold hover:bg-red-900/20 rounded-sm">Exit</button>
+
+          {/* Right: Session counters + exit */}
+          <div className="flex items-center gap-2 mt-3 sm:mt-0 font-mono text-xs flex-shrink-0">
+            <div className="flex items-center gap-1.5 rounded-md border border-teal-500/25 bg-teal-950/30 px-3 py-2 text-teal-400">
+              <span className="h-1.5 w-1.5 rounded-full bg-teal-400 animate-pulse" />
+              SUBMITTED: <span className="font-black">{submittedCount}</span>
+            </div>
+            <div className="flex items-center gap-1.5 rounded-md border border-amber-500/25 bg-amber-950/30 px-3 py-2 text-amber-400">
+              <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+              HELD: <span className="font-black">{holdCount}</span>
+            </div>
+            <button
+              onClick={() => window.location.href = "/"}
+              className="rounded-md border border-red-500/30 bg-red-950/40 px-4 py-2 font-sans text-[11px] font-bold uppercase tracking-widest text-red-400 transition hover:bg-red-900/40 hover:border-red-400/50"
+            >
+              Exit
+            </button>
           </div>
         </header>
 
-        <div className="grid grid-cols-1 xl:grid-cols-5 gap-6 flex-1">
+        {/* ── MAIN GRID ─────────────────────────────────────────────────────── */}
+        <div className="grid grid-cols-1 xl:grid-cols-5 gap-5 flex-1">
+
+          {/* ── LEFT: Claim capture form ──────────────────────────────────── */}
           <section className={`xl:col-span-3 p-5 space-y-4 ${cardClassName}`}>
+
+            {/* Warnings */}
             {medicalAidWarnings.length > 0 && (
-              <div className="rounded-sm border border-amber-500/30 bg-amber-950/20 p-3 space-y-1">
+              <div className="rounded-md border border-amber-500/30 bg-amber-950/20 p-3 space-y-1.5">
                 {medicalAidWarnings.map((w, idx) => (
-                  <p key={idx} className="text-xs font-medium text-amber-300/90 flex gap-2">⚠️ <span>{w}</span></p>
+                  <p key={idx} className="flex gap-2 text-[11px] font-medium text-amber-300/90">
+                    <span>⚠️</span><span>{w}</span>
+                  </p>
                 ))}
               </div>
             )}
 
-            {error && <div className="rounded-sm border border-red-500/40 bg-red-950/30 px-3 py-2 text-xs text-red-200">{error}</div>}
+            {error && (
+              <div className="rounded-md border border-red-500/40 bg-red-950/30 px-4 py-2.5 text-[11px] text-red-300">
+                {error}
+              </div>
+            )}
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+
+              {/* Image uploads */}
               <div className="space-y-3">
                 {!imagePreviewUrl ? (
-                  <div onClick={() => fileInputRef.current?.click()} className="flex min-h-[224px] cursor-pointer flex-col items-center justify-center rounded-sm border-2 border-dashed border-slate-700 bg-slate-950/40 hover:border-teal-500/40 transition p-4 text-center">
-                    <p className="text-sm text-slate-400 font-medium">Capture Primary Hospital Billing Sheet</p>
-                    <p className="text-xs text-slate-600 mt-1">PNG, JPEG, or camera integration</p>
+                  <div
+                    onClick={() => fileInputRef.current?.click()}
+                    className="flex min-h-[210px] cursor-pointer flex-col items-center justify-center rounded-md border-2 border-dashed border-slate-700/60 bg-slate-950/40 p-4 text-center transition hover:border-teal-500/50 hover:bg-slate-950/60"
+                  >
+                    {/* Upload icon */}
+                    <svg className="mb-2 h-8 w-8 text-slate-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
+                    </svg>
+                    <p className="text-sm font-semibold text-slate-400">Capture Primary Billing Sheet</p>
+                    <p className="mt-1 text-xs text-slate-600">PNG, JPEG, or camera</p>
                   </div>
                 ) : (
-                  <div className="relative border border-slate-800 rounded-sm bg-slate-950 p-2">
-                    <img src={imagePreviewUrl} className="max-h-[224px] w-full object-contain mx-auto" alt="Primary Billing Sheet" />
-                    <button onClick={clearImage} className="absolute top-4 right-4 bg-red-600 px-2 py-1 text-[10px] font-bold uppercase rounded-sm">Remove</button>
+                  <div className="relative rounded-md border border-slate-800 bg-slate-950 p-2">
+                    <img src={imagePreviewUrl} className="max-h-[210px] w-full rounded object-contain mx-auto" alt="Primary Billing Sheet" />
+                    <button onClick={clearImage} className="absolute top-3 right-3 rounded bg-red-600 px-2 py-1 text-[10px] font-bold uppercase text-white hover:bg-red-500">Remove</button>
                   </div>
                 )}
                 <input ref={fileInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleFileChange} />
 
                 {!extraImagePreviewUrl ? (
-                  <div onClick={() => extraFileInputRef.current?.click()} className="flex min-h-[224px] cursor-pointer flex-col items-center justify-center rounded-sm border-2 border-dashed border-slate-800 bg-slate-950/20 hover:border-teal-500/30 transition p-4 text-center">
-                    <p className="text-sm text-slate-500 font-medium">+ Add Supporting Document / Image</p>
-                    <p className="text-xs text-slate-600 mt-1">Optional allocation sheet or secondary attachment</p>
+                  <div
+                    onClick={() => extraFileInputRef.current?.click()}
+                    className="flex min-h-[130px] cursor-pointer flex-col items-center justify-center rounded-md border border-dashed border-slate-800 bg-slate-950/20 p-3 text-center transition hover:border-teal-500/30"
+                  >
+                    <p className="text-sm font-medium text-slate-500">+ Add Supporting Document</p>
+                    <p className="mt-0.5 text-xs text-slate-700">Allocation sheet or secondary attachment</p>
                   </div>
                 ) : (
-                  <div className="relative border border-slate-800 rounded-sm bg-slate-950 p-2">
-                    <img src={extraImagePreviewUrl} className="max-h-[224px] w-full object-contain mx-auto" alt="Extra Billing Sheet" />
-                    <button onClick={clearExtraImage} className="absolute top-4 right-4 bg-red-600 px-2 py-1 text-[10px] font-bold uppercase rounded-sm">Remove</button>
+                  <div className="relative rounded-md border border-slate-800 bg-slate-950 p-2">
+                    <img src={extraImagePreviewUrl} className="max-h-[130px] w-full rounded object-contain mx-auto" alt="Supporting Document" />
+                    <button onClick={clearExtraImage} className="absolute top-3 right-3 rounded bg-red-600 px-2 py-1 text-[10px] font-bold uppercase text-white hover:bg-red-500">Remove</button>
                   </div>
                 )}
                 <input ref={extraFileInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleExtraFileChange} />
               </div>
 
+              {/* Form fields */}
               <form onSubmit={e => e.preventDefault()} className="space-y-3">
+
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className={labelClassName}>Patient Name</label>
@@ -583,7 +656,7 @@ export default function DashboardPage() {
 
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className={labelClassName}>Billing Rate Plan Strategy</label>
+                    <label className={labelClassName}>Billing Rate</label>
                     <select value={form.billingRate} onChange={e => updateField("billingRate", e.target.value)} className={`${inputClassName} bg-slate-950`}>
                       <option value="Practice Profile">Practice Profile</option>
                       <option value="Medical aid rates, No Copay">Medical aid rates, No Copay</option>
@@ -601,18 +674,28 @@ export default function DashboardPage() {
                   <input type="text" value={form.procedureDescription} onChange={e => updateField("procedureDescription", e.target.value)} className={inputClassName} placeholder="Surgical description..." />
                 </div>
 
+                {/* ICD-10 search */}
                 <div ref={icdSearchRef} className="relative">
-                  <label className={`${labelClassName} text-teal-400 font-semibold`}>ICD-10 Diagnostic Search *</label>
-                  <input type="text" value={icdSearch} onFocus={() => setIcdDropdownOpen(true)} onChange={e => setIcdSearch(e.target.value)} className={`${inputClassName} border-teal-900/50`} placeholder="Search diagnostic classifications..." />
+                  <label className={`${labelClassName} text-teal-400`}>
+                    ICD-10 Diagnostic Search <span className="text-teal-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={icdSearch}
+                    onFocus={() => setIcdDropdownOpen(true)}
+                    onChange={e => setIcdSearch(e.target.value)}
+                    className={`${inputClassName} border-teal-900/60 focus:border-teal-400/80`}
+                    placeholder="Search diagnostic classifications..."
+                  />
                   {icdDropdownOpen && filteredIcdCodes.length > 0 && (
-                    <ul className="absolute z-20 mt-1 max-h-36 w-full overflow-y-auto bg-slate-950 border border-slate-800 rounded-sm divide-y divide-slate-900 shadow-2xl">
+                    <ul className="absolute z-20 mt-1 max-h-40 w-full overflow-y-auto rounded-md border border-slate-800 bg-slate-950 divide-y divide-slate-900/80 shadow-2xl">
                       {filteredIcdCodes.map((i, idx) => {
                         const code = i?.ICD10CODE || "";
                         const desc = i?.["DESCRIPTION\r"] || "";
                         return (
-                          <li key={code || idx} onClick={() => selectIcdCode({ code, description: desc })} className="px-3 py-2 text-xs hover:bg-slate-900 cursor-pointer flex justify-between gap-2">
-                            <span className="text-teal-400 font-mono font-bold whitespace-nowrap">{code || "N/A"}</span>
-                            <span className="text-slate-400 truncate max-w-xs">{desc}</span>
+                          <li key={code || idx} onClick={() => selectIcdCode({ code, description: desc })} className="flex cursor-pointer items-center justify-between gap-3 px-3 py-2 text-xs transition hover:bg-slate-900">
+                            <span className="font-mono font-bold text-teal-400 whitespace-nowrap">{code || "N/A"}</span>
+                            <span className="truncate text-slate-400">{desc}</span>
                           </li>
                         );
                       })}
@@ -620,22 +703,24 @@ export default function DashboardPage() {
                   )}
                 </div>
 
-                <div className="grid grid-cols-3 gap-2 border-t border-slate-800/80 pt-2">
-                  <div className="col-span-3">
-                    <label className={labelClassName}>Theatre Operations Date</label>
+                {/* Date & time row */}
+                <div className="grid grid-cols-3 gap-2 border-t border-slate-800/70 pt-3">
+                  <div className="col-span-3 sm:col-span-1">
+                    <label className={labelClassName}>Theatre Date</label>
                     <input type="date" value={form.theatreDate} onChange={e => updateField("theatreDate", e.target.value)} className={inputClassName} />
                   </div>
-                  <div className="col-span-1">
-                    <label className={`${labelClassName} text-teal-400 font-semibold`}>Start Clock *</label>
+                  <div>
+                    <label className={`${labelClassName} text-teal-400`}>Start Clock <span className="text-teal-500">*</span></label>
                     <input type="time" value={form.theatreStartTime} onChange={e => updateField("theatreStartTime", e.target.value)} className={`${inputClassName} border-teal-900/50`} />
                   </div>
-                  <div className="col-span-1">
-                    <label className={`${labelClassName} text-teal-400 font-semibold`}>End Clock *</label>
+                  <div>
+                    <label className={`${labelClassName} text-teal-400`}>End Clock <span className="text-teal-500">*</span></label>
                     <input type="time" value={form.theatreEndTime} onChange={e => updateField("theatreEndTime", e.target.value)} className={`${inputClassName} border-teal-900/50`} />
                   </div>
                 </div>
 
-                <div className="grid grid-cols-3 gap-2 border-t border-slate-800/80 pt-2">
+                {/* BMI row */}
+                <div className="grid grid-cols-3 gap-2 border-t border-slate-800/70 pt-3">
                   <div>
                     <label className={labelClassName}>Weight (kg)</label>
                     <input type="number" min="0" step="0.1" value={form.weight} onChange={e => updateField("weight", e.target.value)} className={inputClassName} placeholder="75" />
@@ -659,20 +744,25 @@ export default function DashboardPage() {
                   </div>
                 </div>
 
+                {/* Modifiers */}
                 <div>
                   <label className={labelClassName}>Modifiers Selector Block</label>
-                  <div className="flex flex-wrap gap-1 bg-slate-950 p-2 rounded-sm border border-slate-800 max-h-32 overflow-y-auto">
+                  <div className="max-h-36 overflow-y-auto rounded-md border border-slate-800 bg-slate-950 p-2 space-y-1 scrollbar-thin scrollbar-track-slate-950 scrollbar-thumb-slate-800">
                     {PRELOADED_MODIFIERS.map(m => {
                       const isSel = form.modifiers.includes(m.code);
                       return (
-                        <button 
-                          key={m.code} 
-                          type="button" 
-                          onClick={() => toggleModifierCode(m.code)} 
+                        <button
+                          key={m.code}
+                          type="button"
+                          onClick={() => toggleModifierCode(m.code)}
                           title={m.label}
-                          className={`px-2 py-0.5 rounded-sm font-mono text-[11px] transition text-left truncate max-w-full block w-full ${isSel ? "bg-teal-600 text-white border border-teal-400" : "bg-slate-900 text-slate-400 border border-slate-800 hover:text-slate-200"}`}
+                          className={`flex w-full items-start gap-2 rounded px-2 py-1.5 text-left text-[11px] transition ${isSel
+                            ? "border border-teal-400/40 bg-teal-950/60 text-teal-300"
+                            : "border border-transparent bg-slate-900/50 text-slate-400 hover:bg-slate-900 hover:text-slate-200"
+                            }`}
                         >
-                          [{m.code}] <span className="opacity-70 font-sans text-[10px] ml-1">{m.label}</span>
+                          <span className="font-mono font-bold whitespace-nowrap">[{m.code}]</span>
+                          <span className="opacity-80 font-sans text-[10px] leading-tight">{m.label}</span>
                         </button>
                       );
                     })}
@@ -681,94 +771,138 @@ export default function DashboardPage() {
 
                 <div>
                   <label className={labelClassName}>Extra Diagnostic Notes</label>
-                  <textarea rows={2} value={form.extraNotes} onChange={e => updateField("extraNotes", e.target.value)} className={`${inputClassName} resize-none`} placeholder="Anesthesia notes or system audit details..." />
+                  <textarea rows={2} value={form.extraNotes} onChange={e => updateField("extraNotes", e.target.value)} className={`${inputClassName} resize-none`} placeholder="Anaesthesia notes or system audit details..." />
                 </div>
               </form>
             </div>
 
-            <div className="grid grid-cols-2 gap-3 border-t border-slate-800 pt-3">
-              <button onClick={() => handlePersistClaim("captured")} className="bg-teal-600 font-semibold py-2.5 text-xs font-sans uppercase tracking-wider rounded-sm hover:bg-teal-500">
-                Transmit Claim Matrix
+            {/* CTA buttons */}
+            <div className="grid grid-cols-2 gap-3 border-t border-slate-800/80 pt-4">
+              <button
+                onClick={() => handlePersistClaim("captured")}
+                disabled={isSaving}
+                className="relative overflow-hidden rounded-md py-3 text-xs font-bold uppercase tracking-widest text-white transition disabled:opacity-50"
+                style={{ background: "linear-gradient(135deg, #00a89e 0%, #006b68 100%)" }}
+              >
+                {isSaving ? "Submitting…" : "Submit Claim"}
               </button>
-              <button onClick={() => handlePersistClaim("on_hold")} className="bg-amber-600 font-semibold py-2.5 text-xs font-sans uppercase tracking-wider text-amber-950 rounded-sm hover:bg-amber-500">
-                Hold Case Token
+              <button
+                onClick={() => handlePersistClaim("on_hold")}
+                disabled={isSaving}
+                className="rounded-md border border-amber-500/40 bg-amber-950/40 py-3 text-xs font-bold uppercase tracking-widest text-amber-300 transition hover:bg-amber-950/60 disabled:opacity-50"
+              >
+                Hold Case
               </button>
             </div>
           </section>
 
+          {/* ── RIGHT: Financial pack + tickets ───────────────────────────── */}
           <aside className="xl:col-span-2 flex flex-col gap-4">
+
+            {/* Financial pack */}
             <div className={`p-4 ${cardClassName}`}>
-              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-300">Live Practice Financial Pack</h3>
-              <div className="grid grid-cols-3 text-center gap-2 mt-3 font-mono text-xs">
-                <div className="bg-slate-950/60 p-2 border border-slate-900">
-                  <span className="text-slate-500 block text-[9px] uppercase">MTD Volume</span>
-                  <span className="text-lg font-bold text-white block mt-1">{totalClaimsCount ?? "0"}</span>
+              <div className="mb-3 flex items-center justify-between">
+                <h3 className="text-[11px] font-bold uppercase tracking-[0.15em] text-slate-300">Live Financial Pack</h3>
+                <span className="text-[9px] font-mono text-slate-600 uppercase tracking-wider">MTD</span>
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <div className="relative overflow-hidden rounded-md border border-slate-800 bg-slate-950/60 p-3 text-center">
+                  <div className="absolute left-0 top-0 h-full w-0.5 bg-slate-500" />
+                  <span className="block text-[9px] font-bold uppercase tracking-[0.15em] text-slate-500">Volume</span>
+                  <span className="mt-1 block font-mono text-xl font-extrabold text-white">{totalClaimsCount ?? "0"}</span>
                 </div>
-                <div className="bg-slate-950/60 p-2 border border-slate-900">
-                  <span className="text-slate-500 block text-[9px] uppercase">ZAR Revenue</span>
-                  <span className="text-lg font-bold text-teal-400 block mt-1">R {valueBilledTotal?.toLocaleString() ?? "0"}</span>
+                <div className="relative overflow-hidden rounded-md border border-teal-900/50 bg-slate-950/60 p-3 text-center">
+                  <div className="absolute left-0 top-0 h-full w-0.5 bg-teal-500" />
+                  <span className="block text-[9px] font-bold uppercase tracking-[0.15em] text-slate-500">ZAR Revenue</span>
+                  <span className="mt-1 block font-mono text-xl font-extrabold text-teal-400">R {valueBilledTotal?.toLocaleString() ?? "0"}</span>
                 </div>
-                <div className="bg-slate-950/60 p-2 border border-slate-900">
-                  <span className="text-slate-500 block text-[9px] uppercase">Bureau Rate</span>
-                  <span className="text-lg font-bold text-white block mt-1">{practiceSuccessRate ?? "100"}%</span>
+                <div className="relative overflow-hidden rounded-md border border-slate-800 bg-slate-950/60 p-3 text-center">
+                  <div className="absolute left-0 top-0 h-full w-0.5 bg-slate-400" />
+                  <span className="block text-[9px] font-bold uppercase tracking-[0.15em] text-slate-500">Bureau Rate</span>
+                  <span className="mt-1 block font-mono text-xl font-extrabold text-white">{practiceSuccessRate ?? "100"}%</span>
                 </div>
               </div>
             </div>
 
-            <div className={`flex-1 flex flex-col overflow-hidden max-h-[460px] ${cardClassName}`}>
-              <div className="border-b border-slate-800 px-4 py-3 bg-slate-950/40 flex justify-between items-center">
-                <div>
-                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-200">Interactive Adjudication Tickets</h3>
-                  <p className="text-[10px] text-slate-500 mt-0.5">Real-time chat resolution with your billing consultants</p>
-                </div>
+            {/* Interactive Adjudication Tickets */}
+            <div className={`flex-1 flex flex-col overflow-hidden max-h-[500px] ${cardClassName}`}>
+              <div className="border-b border-slate-800/80 px-4 py-3 bg-slate-950/40">
+                <h3 className="text-[11px] font-bold uppercase tracking-[0.15em] text-slate-200">Adjudication Tickets</h3>
+                <p className="mt-0.5 text-[10px] text-slate-500">Real-time chat with your billing consultants</p>
               </div>
 
-              <div className="flex-1 grid grid-cols-3 overflow-hidden">
-                <ul className="col-span-1 border-r border-slate-800 divide-y divide-slate-900 overflow-y-auto bg-slate-950/20">
+              <div className="flex-1 grid grid-cols-3 overflow-hidden min-h-0">
+                {/* Ticket list */}
+                <ul className="col-span-1 border-r border-slate-800 divide-y divide-slate-900/60 overflow-y-auto bg-slate-950/20">
+                  {liveTickets.length === 0 && (
+                    <li className="p-3 text-[10px] text-slate-600 italic">No open tickets</li>
+                  )}
                   {liveTickets.map(t => (
-                    <li key={t.id} onClick={() => setSelectedTicketId(t.id)} className={`p-2.5 cursor-pointer text-[11px] flex flex-col gap-1 hover:bg-slate-900/40 ${selectedTicketId === t.id ? "bg-slate-950 border-l-2 border-teal-500" : ""}`}>
+                    <li
+                      key={t.id}
+                      onClick={() => setSelectedTicketId(t.id)}
+                      className={`cursor-pointer p-2.5 text-[11px] flex flex-col gap-0.5 transition hover:bg-slate-900/40 ${selectedTicketId === t.id ? "border-l-2 border-teal-500 bg-slate-950" : "border-l-2 border-transparent"}`}
+                    >
                       <span className={`font-semibold truncate ${t.status === "urgent" ? "text-red-400" : "text-slate-200"}`}>{t.subject}</span>
-                      <span className="text-slate-500 font-mono text-[9px] uppercase tracking-wide truncate">{t.medical_aid || "General Case"}</span>
+                      <span className="font-mono text-[9px] uppercase tracking-wide text-slate-500 truncate">{t.medical_aid || "General Case"}</span>
                     </li>
                   ))}
                 </ul>
 
-                <div className="col-span-2 flex flex-col overflow-hidden bg-slate-950/40">
+                {/* Ticket thread */}
+                <div className="col-span-2 flex flex-col overflow-hidden bg-slate-950/30">
                   {selectedTicketId ? (
                     <>
-                      <div className="flex gap-2 p-2 bg-slate-950/80 border-b border-slate-800/60">
-                        <button 
+                      <div className="flex gap-2 border-b border-slate-800/60 bg-slate-950/80 p-2">
+                        <button
                           onClick={handlePingOffice}
-                          className="flex-1 rounded-sm bg-slate-900 border border-slate-700 px-2 py-1.5 text-[10px] font-bold uppercase tracking-wider text-amber-400 hover:bg-slate-800 transition"
+                          className="flex-1 rounded border border-amber-500/30 bg-slate-900 px-2 py-1.5 text-[10px] font-bold uppercase tracking-wider text-amber-400 transition hover:bg-slate-800"
                         >
                           ⚡ Ping Office
                         </button>
-                        <button 
+                        <button
                           onClick={handleMarkTicketComplete}
-                          className="flex-1 rounded-sm bg-teal-950/60 border border-teal-500/40 px-2 py-1.5 text-[10px] font-bold uppercase tracking-wider text-teal-400 hover:bg-teal-900/40 transition"
+                          className="flex-1 rounded border border-teal-500/30 bg-teal-950/50 px-2 py-1.5 text-[10px] font-bold uppercase tracking-wider text-teal-400 transition hover:bg-teal-900/40"
                         >
-                          ✓ Mark Resolved
+                          ✓ Resolved
                         </button>
                       </div>
 
-                      <div className="flex-1 p-3 overflow-y-auto space-y-2 text-xs flex flex-col">
+                      <div className="flex-1 flex flex-col space-y-2 overflow-y-auto p-3 text-xs">
                         {ticketMessages.map(m => {
                           const isMe = m.sender_role === "practitioner";
                           return (
-                            <div key={m.id} className={`max-w-[85%] rounded-sm p-2 flex flex-col ${isMe ? "bg-teal-950/40 border border-teal-500/20 text-teal-200 self-end" : "bg-slate-900 border border-slate-800 text-slate-300 self-start"}`}>
-                              <span className="font-sans leading-relaxed">{m.message}</span>
-                              <span className="text-[8px] font-mono text-slate-500 mt-1 self-end">{new Date(m.created_at).toLocaleTimeString("en-ZA", { hour: "2-digit", minute: "2-digit" })}</span>
+                            <div
+                              key={m.id}
+                              className={`max-w-[88%] rounded-md p-2.5 flex flex-col ${isMe
+                                ? "self-end border border-teal-500/20 bg-teal-950/40 text-teal-100"
+                                : "self-start border border-slate-800 bg-slate-900 text-slate-300"
+                                }`}
+                            >
+                              <span className="leading-relaxed">{m.message}</span>
+                              <span className="mt-1 self-end font-mono text-[8px] text-slate-500">
+                                {new Date(m.created_at).toLocaleTimeString("en-ZA", { hour: "2-digit", minute: "2-digit" })}
+                              </span>
                             </div>
                           );
                         })}
                       </div>
-                      <form onSubmit={handleSendChatReply} className="border-t border-slate-800 p-2 flex bg-slate-950/80">
-                        <input type="text" value={chatReplyInput} onChange={e => setChatReplyInput(e.target.value)} placeholder="Type chat update..." className="flex-1 bg-transparent px-2 text-xs text-slate-100 outline-none" />
-                        <button type="submit" className="bg-teal-600 px-3 py-1 text-[10px] font-bold uppercase tracking-wider rounded-sm">Send</button>
+
+                      <form onSubmit={handleSendChatReply} className="flex border-t border-slate-800/80 bg-slate-950/80 p-2">
+                        <input
+                          type="text"
+                          value={chatReplyInput}
+                          onChange={e => setChatReplyInput(e.target.value)}
+                          placeholder="Type a message…"
+                          className="flex-1 bg-transparent px-2 text-xs text-slate-100 placeholder:text-slate-600 outline-none"
+                        />
+                        <button type="submit" className="rounded bg-teal-600 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-white hover:bg-teal-500 transition">Send</button>
                       </form>
                     </>
                   ) : (
-                    <div className="flex-1 flex items-center justify-center text-xs text-slate-600 italic p-4 text-center">Select an open billing alert to join the interactive audit thread.</div>
+                    <div className="flex flex-1 items-center justify-center p-6 text-center">
+                      <p className="text-xs italic text-slate-600">Select an open billing alert to join the audit thread.</p>
+                    </div>
                   )}
                 </div>
               </div>
